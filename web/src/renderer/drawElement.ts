@@ -1,0 +1,96 @@
+import type { RoughCanvas } from 'roughjs/bin/canvas';
+import type { ColorMode, SketchElement } from '../core/types';
+import type { TextPrimitive } from '../elements/ElementHandler';
+import { shapeCache } from './ShapeCache';
+import { fileStore } from '../files/FileStore';
+
+/** Baseline offset shared by canvas & SVG so text lines up identically in both. */
+export const textBaselineY = (t: TextPrimitive, lineIndex: number): number =>
+  lineIndex * t.lineHeightPx + (t.lineHeightPx - t.fontSize) / 2 + t.fontSize * 0.8;
+
+export const textAnchorX = (t: TextPrimitive): number =>
+  t.align === 'center' ? t.width / 2 : t.align === 'right' ? t.width : 0;
+
+/** CSS filter that applies the print colour mode to raster images. */
+export const imageFilterFor = (mode: ColorMode): string =>
+  mode === 'grayscale' ? 'grayscale(1)' : mode === 'blackwhite' ? 'grayscale(1) contrast(1.6)' : 'none';
+
+function drawImage(ctx: CanvasRenderingContext2D, fileId: string, w: number, h: number, mode: ColorMode): void {
+  const img = fileStore.getImage(fileId);
+  if (!img) {
+    // placeholder while decoding / before a collaborator's file arrives
+    ctx.save();
+    ctx.fillStyle = 'rgba(134,142,150,0.12)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(134,142,150,0.6)';
+    ctx.setLineDash([6, 6]);
+    ctx.strokeRect(0, 0, w, h);
+    ctx.restore();
+    return;
+  }
+  const filter = imageFilterFor(mode);
+  if (filter !== 'none') ctx.filter = filter;
+  ctx.drawImage(img, 0, 0, w, h);
+  ctx.filter = 'none';
+}
+
+/** Draws one element onto a 2D context already transformed to world space. */
+export function drawElement(
+  ctx: CanvasRenderingContext2D,
+  rc: RoughCanvas,
+  el: SketchElement,
+  mode: ColorMode,
+  alpha = 1,
+): void {
+  const shape = shapeCache.get(el, mode);
+  ctx.save();
+  ctx.globalAlpha = (mode === 'blackwhite' ? 1 : el.opacity / 100) * alpha;
+  ctx.translate(el.x, el.y);
+
+  for (const d of shape.drawables) rc.draw(d);
+
+  if (shape.image) drawImage(ctx, shape.image.fileId, shape.image.width, shape.image.height, mode);
+
+  if (shape.paths.length) {
+    ctx.lineJoin = 'round';
+    const baseAlpha = ctx.globalAlpha;
+    for (const p of shape.paths) {
+      ctx.lineCap = p.lineCap ?? 'round';
+      ctx.globalAlpha = baseAlpha * (p.opacity ?? 1);
+      ctx.globalCompositeOperation = p.blend ?? 'source-over';
+      const path = new Path2D(p.d);
+      if (p.fill) {
+        ctx.fillStyle = p.fill;
+        ctx.fill(path);
+      }
+      if (p.stroke) {
+        ctx.strokeStyle = p.stroke;
+        ctx.lineWidth = p.strokeWidth ?? 1;
+        ctx.stroke(path);
+      }
+    }
+    ctx.globalAlpha = baseAlpha;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  if (shape.text) drawTextBlock(ctx, shape.text, 0, 0);
+  for (const cell of shape.texts ?? []) drawTextBlock(ctx, cell.text, cell.x, cell.y);
+  ctx.restore();
+}
+
+function drawTextBlock(ctx: CanvasRenderingContext2D, t: TextPrimitive, ox: number, oy: number): void {
+  ctx.font = t.font;
+  ctx.fillStyle = t.color;
+  ctx.textAlign = t.align;
+  ctx.textBaseline = 'alphabetic';
+  const x = ox + textAnchorX(t);
+  t.lines.forEach((line, i) => {
+    const y = oy + textBaselineY(t, i);
+    ctx.fillText(line, x, y);
+    if (t.underline && line) {
+      const w = ctx.measureText(line).width;
+      const start = t.align === 'center' ? x - w / 2 : t.align === 'right' ? x - w : x;
+      ctx.fillRect(start, y + t.fontSize * 0.12, w, Math.max(1, t.fontSize / 16));
+    }
+  });
+}

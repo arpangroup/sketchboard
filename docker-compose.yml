@@ -1,0 +1,17 @@
+services:
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_COLLAB_SERVER_URL: ws://localhost:3002
+    ports:
+      - "8080:80"
+    depends_on:
+      - collab
+  collab:
+    build: ./collab-server
+    environment:
+      PORT: 3002
+      # ALLOWED_ORIGINS: http://localhost:8080
+    ports:
+      - "3002:3002"

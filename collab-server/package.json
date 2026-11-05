@@ -1,0 +1,22 @@
+{
+  "name": "sketchboard-collab-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Zero-knowledge WebSocket relay for SketchBoard live collaboration",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.3",
+    "typescript": "~5.8.3"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "sketchboard",
+  "private": true,
+  "description": "SketchBoard - hand-drawn virtual whiteboard (web app + collaboration relay)",
+  "scripts": {
+    "install:all": "npm --prefix web install && npm --prefix collab-server install",
+    "dev:web": "npm --prefix web run dev",
+    "dev:collab": "npm --prefix collab-server run dev",
+    "build": "npm --prefix web run build && npm --prefix collab-server run build",
+    "test": "npm --prefix web test"
+  }
+}

@@ -1,0 +1,1171 @@
+import { createInitialAppState, HIT_TOLERANCE, MAX_ZOOM, MIN_ZOOM } from '../core/constants';
+import { clamp, unionBounds } from '../core/geometry';
+import { Emitter, Store } from '../core/Store';
+import { debounce, randomInteger } from '../core/utils';
+import type {
+  AppState,
+  BinaryFile,
+  Bounds,
+  CurrentStyle,
+  Point,
+  SceneData,
+  SketchElement,
+  TableDefaults,
+  TableElement,
+  TextElement,
+  ToolType,
+  Viewport,
+} from '../core/types';
+import { cloneElement, createImage, createText, updateElement } from '../elements/factory';
+import {
+  distributeColumns,
+  insertCol,
+  insertRow,
+  relayout,
+  removeCol,
+  removeRow,
+  resizeGrid,
+  setCellText,
+} from '../elements/table/tableLayout';
+import { fileStore, imageFileToBinary } from '../files/FileStore';
+import { LaserLayer } from '../renderer/LaserLayer';
+import { STORAGE_KEYS } from '../core/constants';
+import { ensureFontLoaded } from '../core/fonts';
+import { elementRegistry } from '../elements/registry';
+import { measureText } from '../elements/textMetrics';
+import { contentBounds } from '../export/region';
+import { getPageBounds } from '../page/pageSizes';
+import { type PageDecoration, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
+import { LocalStorageAdapter, type StorageAdapter } from '../persistence/StorageAdapter';
+import { parseScene, serializeScene } from '../persistence/serialization';
+import { CanvasRenderer, screenToWorld } from '../renderer/CanvasRenderer';
+import { shapeCache } from '../renderer/ShapeCache';
+import { History } from '../scene/History';
+import { Scene } from '../scene/Scene';
+import { createTools, type PointerInfo, type Tool, type ToolContext } from '../tools';
+import { drawSelection } from '../tools/selectionGeometry';
+
+const CLIPBOARD_MARKER = 'sketchboard/clipboard';
+/** Touches within this time of pen activity are treated as a resting palm. */
+const PALM_COOLDOWN_MS = 1200;
+/** Contact patches wider than this (CSS px) are a palm / side of hand, not a fingertip. */
+const PALM_CONTACT_PX = 40;
+
+/** Style keys that can be applied directly to any element. */
+const COMMON_STYLE_KEYS = [
+  'strokeColor', 'backgroundColor', 'fillStyle', 'strokeWidth', 'strokeStyle', 'roughness', 'opacity',
+] as const;
+
+/**
+ * Editor = Facade + Mediator. Owns the scene, history, tools, renderer and app state and
+ * coordinates them. React components only talk to this class (and never to each other),
+ * keeping UI and engine decoupled. It implements ToolContext so tools get a narrow API.
+ */
+export class Editor implements ToolContext {
+  readonly store = new Store<AppState>(createInitialAppState());
+  readonly scene = new Scene();
+  readonly history = new History(this.scene);
+  readonly events = new Emitter<{ pointerMove: Point; laser: { point: Point; start: boolean } }>();
+  /** Laser pointer trails (local + collaborators) - visual only. */
+  readonly laser = new LaserLayer();
+  /** The one pointer currently driving a tool gesture (palm rejection / multi-touch safety). */
+  private activePointerId: number | null = null;
+
+  private tools: Map<ToolType, Tool>;
+  private renderer: CanvasRenderer | null = null;
+  private canvas: HTMLCanvasElement | null = null;
+  private size = { width: 0, height: 0, dpr: 1 };
+  private rafId: number | null = null;
+
+  private pointerDown = false;
+  private panLast: Point | null = null;
+  private spaceHeld = false;
+  private touches = new Map<number, Point>();
+  private activePointerType = '';
+  /** Touches identified as palm/hand: ignored until they lift. */
+  private rejected = new Set<number>();
+  private lastPenActivity = -Infinity;
+  private panPointerId: number | null = null;
+  private pinch: { dist: number; center: Point; zoom: number } | null = null;
+  private clipboard: SketchElement[] = [];
+  /** Touch double-tap detection (mobile browsers don't reliably emit dblclick on canvas). */
+  private lastTap: { at: number; x: number; y: number } | null = null;
+  private lastSyntheticDoubleTap = 0;
+  /** Last known pointer position (world) - used as paste target. */
+  private lastPointer: Point | null = null;
+  private storage: StorageAdapter = new LocalStorageAdapter();
+  private autosave = debounce(() => void this.storage.save(this.getSceneData()), 400);
+
+  constructor() {
+    this.tools = createTools(this);
+    fileStore.on('loaded', () => this.requestRender());
+    // Web fonts arrive asynchronously: load what text elements use, then re-measure once they're ready.
+    this.scene.onChange(({ changed }) => {
+      for (const el of changed) {
+        if (el.isDeleted) continue;
+        if (el.type === 'text') void ensureFontLoaded(el.fontFamily, el.fontWeight, el.fontStyle);
+        if (el.type === 'table') void ensureFontLoaded(el.fontFamily, 'bold');
+      }
+    });
+    if (typeof document !== 'undefined' && document.fonts) {
+      document.fonts.addEventListener('loadingdone', () => this.refreshTextMetrics());
+    }
+    fileStore.on('added', () => this.requestRender());
+    this.scene.onChange(() => {
+      this.requestRender();
+      this.autosave();
+    });
+    this.store.subscribe((s, prev) => {
+      if (s.pageSetup !== prev.pageSetup || s.gridEnabled !== prev.gridEnabled) this.autosave();
+      this.requestRender();
+    });
+  }
+
+  // ───────────────────────────── ToolContext ─────────────────────────────
+
+  getState = (): AppState => this.store.getState();
+  setState = (patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)): void =>
+    this.store.setState(patch);
+  getViewport = (): Viewport => this.getState().viewport;
+
+  commitHistory = (): void => {
+    this.history.commit();
+  };
+
+  setCursor = (cursor: string): void => {
+    if (this.canvas) this.canvas.style.cursor = cursor;
+  };
+
+  hitTest = (world: Point): SketchElement | null => {
+    const tolerance = HIT_TOLERANCE / this.getViewport().zoom;
+    const editing = this.getState().editingTextId;
+    const els = this.scene.getElements();
+    for (let i = els.length - 1; i >= 0; i--) {
+      const el = els[i];
+      if (el.id === editing) continue;
+      if (elementRegistry.get(el).hitTest(el, world, tolerance)) return el;
+    }
+    return null;
+  };
+
+  getSelectedElements = (): SketchElement[] => {
+    const ids = this.getState().selectedIds;
+    return this.scene.getElements().filter((e) => ids[e.id]);
+  };
+
+  setSelection = (ids: readonly string[]): void => {
+    const selectedIds: Record<string, true> = {};
+    for (const id of ids) selectedIds[id] = true;
+    this.setState({ selectedIds });
+  };
+
+  finishCreation = (el: SketchElement): void => {
+    this.commitHistory();
+    if (!this.getState().toolLocked) this.setTool('selection');
+    this.setSelection([el.id]);
+  };
+
+  nextZIndex = (): number => this.scene.maxZIndex() + 1;
+
+  panBy = (dx: number, dy: number): void => {
+    this.setState((s) => ({
+      viewport: { ...s.viewport, scrollX: s.viewport.scrollX + dx / s.viewport.zoom, scrollY: s.viewport.scrollY + dy / s.viewport.zoom },
+    }));
+  };
+
+  requestRender = (): void => {
+    if (this.rafId !== null || !this.renderer) return;
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null;
+      this.renderNow();
+    });
+  };
+
+  // ───────────────────────────── Canvas lifecycle ─────────────────────────────
+
+  attachCanvas(canvas: HTMLCanvasElement): void {
+    this.canvas = canvas;
+    this.renderer = new CanvasRenderer(canvas);
+    this.setCursor(this.activeTool().cursor);
+    this.requestRender();
+  }
+
+  detachCanvas(): void {
+    if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+    this.rafId = null;
+    this.renderer = null;
+    this.canvas = null;
+  }
+
+  resize(width: number, height: number, dpr: number): void {
+    this.size = { width, height, dpr };
+    this.requestRender();
+  }
+
+  /** Elements a remote update must not clobber (being dragged / typed right now). */
+  getProtectedIds(): ReadonlySet<string> {
+    const ids = new Set(this.activeTool().activeIds?.() ?? []);
+    const editing = this.getState().editingTextId;
+    if (editing) ids.add(editing);
+    const cell = this.getState().editingCell;
+    if (cell) ids.add(cell.id);
+    return ids;
+  }
+
+  private activeTool(): Tool {
+    return this.tools.get(this.getState().activeTool)!;
+  }
+
+  private renderNow(): void {
+    if (!this.renderer) return;
+    const s = this.getState();
+    const tool = this.activeTool();
+    const selected = this.getSelectedElements();
+    const editing = s.editingTextId;
+    this.renderer.render({
+      elements: this.scene.getElements(),
+      viewport: s.viewport,
+      width: this.size.width,
+      height: this.size.height,
+      dpr: this.size.dpr,
+      pageSetup: s.pageSetup,
+      colorMode: s.viewColorMode,
+      gridEnabled: s.gridEnabled,
+      hiddenIds: editing ? new Set([editing]) : undefined,
+      fadedIds: tool.fadedIds?.(),
+      collaborators: Object.values(s.collab.collaborators),
+      pageCount: this.getPageCount(),
+      decorations: this.getPageDecorations(),
+      overlay: (ctx, zoom) => {
+        if (s.activeTool === 'selection') drawSelection(ctx, selected, zoom);
+        tool.renderOverlay?.(ctx, zoom);
+        this.laser.render(ctx, zoom);
+        this.drawPageHighlight(ctx, zoom);
+      },
+    });
+    // keep animating while laser trails / page highlight fade out
+    if (this.laser.active || this.pageHighlight) this.requestRender();
+  }
+
+  private pageCache: { rev: number; setup: unknown; count: number; deco: PageDecoration[]; day: string } | null = null;
+
+  /** Pages in the document: grows automatically with content below the last page. */
+  getPageCount(): number {
+    return this.pageLayout().count;
+  }
+
+  getPageDecorations(): PageDecoration[] {
+    return this.pageLayout().deco;
+  }
+
+  private pageLayout() {
+    const setup = this.getState().pageSetup;
+    const day = new Date().toDateString();
+    const c = this.pageCache;
+    if (c && c.rev === this.scene.revision && c.setup === setup && c.day === day) return c;
+    const count = requiredPageCount(setup, this.scene.getElements());
+    this.pageCache = { rev: this.scene.revision, setup, count, deco: pageDecorations(setup, count), day };
+    return this.pageCache;
+  }
+
+  emitLaser = (world: Point, start: boolean): void => {
+    this.laser.add('local', '#ff3b30', world, start);
+    this.events.emit('laser', { point: world, start });
+    this.requestRender();
+  };
+
+  // ───────────────────────────── Input handling ─────────────────────────────
+
+  private toPointerInfo(e: PointerEvent | MouseEvent): PointerInfo {
+    const rect = this.canvas!.getBoundingClientRect();
+    const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    return {
+      screen,
+      world: screenToWorld(screen.x, screen.y, this.getViewport()),
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      modKey: e.ctrlKey || e.metaKey,
+      button: e.button,
+      pointerType: 'pointerType' in e ? e.pointerType : 'mouse',
+      pressure: 'pressure' in e ? (e.pointerType === 'mouse' ? 0.5 : e.pressure) : 0.5,
+    };
+  }
+
+  /**
+   * Input routing with palm rejection. Rules, in priority order:
+   *  1. Pen activity wins. While the pen is down - and for PALM_COOLDOWN ms after any pen
+   *     activity (down, move, hover, up) - every touch is rejected for its whole lifetime.
+   *     Writers rest their palm between strokes; those touches must never pan, zoom or draw.
+   *  2. Large contact areas (palm, side of hand) are rejected outright.
+   *  3. A pen touching down cancels anything a touch started (palm stroke, pan, pinch).
+   *  4. Pen & mouse are single-contact devices: a new down while one is "active" means the
+   *     previous up was lost by the browser, so that gesture is finished instead of blocking input.
+   *  5. Otherwise (no recent pen): two fingers pinch-zoom; one finger pans in pen mode or draws.
+   */
+  handlePointerDown = (e: PointerEvent): void => {
+    if (!this.canvas) return;
+    if (this.getState().editingTextId || this.getState().editingCell) {
+      (document.activeElement as HTMLElement | null)?.blur();
+    }
+    const info = this.toPointerInfo(e);
+    const now = performance.now();
+
+    if (e.pointerType === 'pen') {
+      this.lastPenActivity = now;
+      if (!this.getState().penMode) this.setPenMode(true, true);
+      this.cancelTouchInteractions(); // rule 3
+    }
+
+    if (e.pointerType === 'touch') {
+      if (this.isPalm(e, now)) {
+        this.rejected.add(e.pointerId); // rules 1 & 2
+        return;
+      }
+      this.touches.set(e.pointerId, info.screen);
+      if (this.touches.size === 2) return this.beginPinch();
+      if (this.touches.size > 2) return;
+      if (this.getState().penMode) {
+        this.capture(e.pointerId);
+        this.panLast = info.screen;
+        this.panPointerId = e.pointerId;
+        return;
+      }
+    }
+
+    if (this.activePointerId !== null) {
+      if (e.pointerType === this.activePointerType && e.pointerType !== 'touch') {
+        this.endActiveGesture(info); // rule 4: stale gesture from a lost pointerup
+      } else {
+        return; // another pointer legitimately owns the gesture
+      }
+    }
+
+    this.capture(e.pointerId);
+    if (e.button === 1 || (e.button === 0 && this.spaceHeld)) {
+      this.panLast = info.screen;
+      this.panPointerId = e.pointerId;
+      this.setCursor('grabbing');
+      return;
+    }
+    if (e.button !== 0) return;
+    this.pointerDown = true;
+    this.activePointerId = e.pointerId;
+    this.activePointerType = e.pointerType;
+    this.activeTool().onPointerDown(info);
+  };
+
+  handlePointerMove = (e: PointerEvent): void => {
+    if (!this.canvas) return;
+    if (e.pointerType === 'pen') this.lastPenActivity = performance.now(); // includes Apple Pencil hover
+    if (this.rejected.has(e.pointerId)) return;
+    const info = this.toPointerInfo(e);
+    if (this.activePointerId === null || e.pointerId === this.activePointerId) {
+      this.lastPointer = info.world;
+      this.events.emit('pointerMove', info.world);
+    }
+    if (e.pointerType === 'touch' && this.touches.has(e.pointerId)) {
+      this.touches.set(e.pointerId, info.screen);
+      if (this.pinch) return this.updatePinch();
+    }
+    if (this.panLast && e.pointerId === this.panPointerId) {
+      this.panBy(info.screen.x - this.panLast.x, info.screen.y - this.panLast.y);
+      this.panLast = info.screen;
+      return;
+    }
+    if (this.activePointerId !== null && e.pointerId !== this.activePointerId) return; // extra finger
+    if (this.activePointerId === null && e.pointerType === 'touch') return; // finger hover doesn't exist
+
+    // Coalesced events: every sample the stylus/mouse produced between frames → smooth ink.
+    const tool = this.getState().activeTool;
+    const inking = this.pointerDown && (tool === 'freedraw' || tool === 'highlighter' || tool === 'laser');
+    const events = inking && e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    if (events.length > 1) {
+      for (const ce of events) this.activeTool().onPointerMove(this.toPointerInfo(ce), true);
+    } else {
+      this.activeTool().onPointerMove(info, this.pointerDown);
+    }
+  };
+
+  handlePointerUp = (e: PointerEvent): void => {
+    if (e.pointerType === 'pen') this.lastPenActivity = performance.now();
+    this.touches.delete(e.pointerId);
+    if (this.rejected.delete(e.pointerId)) return;
+
+    // The active gesture ALWAYS gets its up, whatever else is going on (pinch, pan...).
+    if (this.pointerDown && e.pointerId === this.activePointerId) {
+      const info = this.toPointerInfo(e);
+      this.endActiveGesture(info);
+      if (e.pointerType === 'touch') this.detectDoubleTap(info);
+      return;
+    }
+    if (this.pinch && this.touches.size < 2) this.pinch = null;
+    if (this.panLast && e.pointerId === this.panPointerId) {
+      this.panLast = null;
+      this.panPointerId = null;
+      this.setCursor(this.spaceHeld ? 'grab' : this.activeTool().cursor);
+    }
+  };
+
+  /** Browser revoked capture without a pointerup (e.g. system gesture) - end cleanly. */
+  handleLostCapture = (e: PointerEvent): void => {
+    if (e.pointerId === this.activePointerId) this.handlePointerUp(e);
+  };
+
+  private endActiveGesture(info: PointerInfo): void {
+    this.pointerDown = false;
+    this.activePointerId = null;
+    this.activeTool().onPointerUp(info);
+  }
+
+  /** Palm heuristics: recent pen use, or a contact patch far bigger than a fingertip. */
+  private isPalm(e: PointerEvent, now: number): boolean {
+    const penBusy = this.activePointerType === 'pen' && this.activePointerId !== null;
+    const recentPen = now - this.lastPenActivity < PALM_COOLDOWN_MS;
+    const largeContact = Math.max(e.width || 0, e.height || 0) > PALM_CONTACT_PX;
+    return penBusy || (this.getState().penMode && recentPen) || largeContact;
+  }
+
+  /** A pen landing cancels whatever touches were doing (palm stroke, pan, pinch). */
+  private cancelTouchInteractions(): void {
+    for (const id of this.touches.keys()) this.rejected.add(id);
+    this.touches.clear();
+    this.pinch = null;
+    if (this.panLast && this.panPointerId !== null) {
+      this.rejected.add(this.panPointerId);
+      this.panLast = null;
+      this.panPointerId = null;
+    }
+    if (this.pointerDown && this.activePointerType === 'touch') {
+      // the palm got there first and started drawing: throw that away
+      this.rejected.add(this.activePointerId!);
+      this.pointerDown = false;
+      this.activePointerId = null;
+      const tool = this.activeTool();
+      if (tool.onCancel) tool.onCancel();
+      else tool.onDeactivate?.();
+    }
+  }
+
+  private capture(pointerId: number): void {
+    try {
+      this.canvas?.setPointerCapture(pointerId);
+    } catch {
+      /* pointer already released (fast taps) - capture is best-effort */
+    }
+  }
+
+  setPenMode(on: boolean, auto = false): void {
+    this.setState({ penMode: on });
+    try {
+      localStorage.setItem(STORAGE_KEYS.penMode, String(on));
+    } catch {
+      /* ignore */
+    }
+    if (auto) this.toast('Pen detected — the pen draws, fingers pan & zoom (change in ⋯ More tools)');
+  }
+
+  private detectDoubleTap(info: PointerInfo): void {
+    const now = performance.now();
+    const t = this.lastTap;
+    if (t && now - t.at < 320 && Math.hypot(info.screen.x - t.x, info.screen.y - t.y) < 24) {
+      this.lastTap = null;
+      this.lastSyntheticDoubleTap = now;
+      this.activeTool().onDoubleClick?.(info);
+    } else {
+      this.lastTap = { at: now, x: info.screen.x, y: info.screen.y };
+    }
+  }
+
+  handleDoubleClick = (e: MouseEvent): void => {
+    if (performance.now() - this.lastSyntheticDoubleTap < 600) return; // already handled as a double-tap
+    const info = this.toPointerInfo(e);
+    const tool = this.activeTool();
+    if (tool.onDoubleClick) return tool.onDoubleClick(info);
+  };
+
+  handleWheel = (e: WheelEvent): void => {
+    e.preventDefault();
+    const rect = this.canvas!.getBoundingClientRect();
+    const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    if (e.ctrlKey || e.metaKey) {
+      const factor = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0025));
+      this.zoomAt(this.getViewport().zoom * factor, anchor);
+      return;
+    }
+    const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+    const dy = e.shiftKey && !e.deltaX ? 0 : e.deltaY;
+    this.panBy(-dx, -dy);
+  };
+
+  setSpaceHeld(held: boolean): void {
+    if (this.spaceHeld === held) return;
+    this.spaceHeld = held;
+    if (!this.panLast) this.setCursor(held ? 'grab' : this.activeTool().cursor);
+  }
+
+  private beginPinch(): void {
+    // A second finger cancels whatever the first finger started.
+    if (this.pointerDown) {
+      this.pointerDown = false;
+      this.activePointerId = null;
+      this.activeTool().onDeactivate?.();
+    }
+    const [a, b] = [...this.touches.values()];
+    this.pinch = {
+      dist: Math.hypot(a.x - b.x, a.y - b.y),
+      center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      zoom: this.getViewport().zoom,
+    };
+  }
+
+  private updatePinch(): void {
+    const [a, b] = [...this.touches.values()];
+    const p = this.pinch!;
+    const center = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    this.panBy(center.x - p.center.x, center.y - p.center.y);
+    p.center = center;
+    this.zoomAt(p.zoom * (Math.hypot(a.x - b.x, a.y - b.y) / p.dist), center);
+  }
+
+  // ───────────────────────────── Tools & style ─────────────────────────────
+
+  setTool(type: ToolType): void {
+    const prev = this.activeTool();
+    if (prev.type === type) return;
+    prev.onDeactivate?.();
+    this.setState({ activeTool: type, ...(type !== 'selection' ? { selectedIds: {} } : {}) });
+    const next = this.activeTool();
+    next.onActivate?.();
+    this.setCursor(next.cursor);
+  }
+
+  /** Updates the "current item" style AND every selected element. */
+  updateStyle(patch: Partial<CurrentStyle>): void {
+    if (patch.fontFamily) void ensureFontLoaded(patch.fontFamily, patch.fontWeight, patch.fontStyle);
+    this.setState((s) => ({ currentStyle: { ...s.currentStyle, ...patch } }));
+    const selected = this.getSelectedElements();
+    if (!selected.length) return;
+    const updates = selected.map((el) => {
+      const p: Record<string, unknown> = {};
+      for (const k of COMMON_STYLE_KEYS) if (k in patch) p[k] = patch[k];
+      if (el.type === 'freedraw' && el.kind === 'highlighter') {
+        delete p.strokeColor; // highlighters use the highlight palette
+        if (patch.highlightColor) p.strokeColor = patch.highlightColor;
+      }
+      if ((el.type === 'rectangle' || el.type === 'diamond' || el.type === 'ellipse') && patch.rounded !== undefined) {
+        p.rounded = patch.rounded;
+      }
+      if (el.type === 'arrow' || el.type === 'line') {
+        if (patch.startArrowhead) p.startArrowhead = patch.startArrowhead;
+        if (patch.endArrowhead) p.endArrowhead = patch.endArrowhead;
+      }
+      const textKeys = ['fontSize', 'fontFamily', 'textAlign', 'fontWeight', 'fontStyle', 'underline'] as const;
+      if (el.type === 'table' && (patch.fontSize || patch.fontFamily || patch.textAlign)) {
+        const next = {
+          ...el,
+          fontSize: patch.fontSize ?? el.fontSize,
+          fontFamily: patch.fontFamily ?? el.fontFamily,
+          textAlign: patch.textAlign ?? el.textAlign,
+        };
+        // shrink rows back to fit the new text size, then grow where needed
+        Object.assign(p, { fontSize: next.fontSize, fontFamily: next.fontFamily, textAlign: next.textAlign },
+          relayout({ ...next, rowHeights: next.rowHeights.map(() => 0) }));
+      }
+      if (el.type === 'text' && textKeys.some((k) => patch[k] !== undefined)) {
+        const next = {
+          fontSize: patch.fontSize ?? el.fontSize,
+          fontFamily: patch.fontFamily ?? el.fontFamily,
+          textAlign: patch.textAlign ?? el.textAlign,
+          fontWeight: patch.fontWeight ?? el.fontWeight,
+          fontStyle: patch.fontStyle ?? el.fontStyle,
+          underline: patch.underline ?? el.underline,
+        };
+        const m = measureText(el.text || ' ', next.fontSize, next.fontFamily, next);
+        Object.assign(p, next, { width: m.width, height: m.height });
+      }
+      return updateElement(el, p as Partial<SketchElement>);
+    });
+    this.scene.upsert(updates);
+    this.commitHistory();
+  }
+
+  // ───────────────────────────── Text editing ─────────────────────────────
+
+  startTextEditing = (id: string): void => {
+    this.setState({ editingTextId: id, selectedIds: {} });
+  };
+
+  updateEditingText(text: string): void {
+    const id = this.getState().editingTextId;
+    const el = id ? (this.scene.getElement(id) as TextElement | undefined) : undefined;
+    if (!el) return;
+    const m = measureText(text || ' ', el.fontSize, el.fontFamily, el);
+    // keep alignment anchor stable while typing
+    const dx = el.textAlign === 'center' ? (el.width - m.width) / 2 : el.textAlign === 'right' ? el.width - m.width : 0;
+    this.scene.upsert([updateElement(el, { text, width: m.width, height: m.height, x: el.x + dx })]);
+  }
+
+  finishTextEditing(): void {
+    const id = this.getState().editingTextId;
+    if (!id) return;
+    const el = this.scene.getElement(id) as TextElement | undefined;
+    this.setState({ editingTextId: null });
+    if (!el) return;
+    if (!el.text.trim()) {
+      this.scene.upsert([updateElement(el, { isDeleted: true })]);
+      this.commitHistory();
+      return;
+    }
+    this.commitHistory();
+    if (!this.getState().toolLocked) this.setTool('selection');
+    if (this.getState().activeTool === 'selection') this.setSelection([el.id]);
+  }
+
+  // ───────────────────────────── Tables ─────────────────────────────
+
+  /** Last cell the user clicked / edited: row & column commands act on it. */
+  private tableCursor: { id: string; row: number; col: number } | null = null;
+
+  noteTableCell = (id: string, row: number, col: number): void => {
+    this.tableCursor = { id, row, col };
+  };
+
+  getTableCursor(id: string): { row: number; col: number } | null {
+    const c = this.tableCursor;
+    const el = this.scene.getElement(id);
+    if (!c || c.id !== id || !el || el.type !== 'table') return null;
+    return { row: Math.min(c.row, el.rows - 1), col: Math.min(c.col, el.cols - 1) };
+  }
+
+  startCellEditing = (id: string, row: number, col: number): void => {
+    const el = this.scene.getElement(id);
+    if (!el || el.type !== 'table' || el.locked) return;
+    this.tableCursor = { id, row, col };
+    this.setState({ editingCell: { id, row, col }, selectedIds: { [id]: true } });
+  };
+
+  updateEditingCell(text: string): void {
+    const cell = this.getState().editingCell;
+    const el = cell && this.scene.getElement(cell.id);
+    if (!cell || !el || el.type !== 'table') return;
+    this.scene.upsert([updateElement(el, setCellText(el, cell.row, cell.col, text))]);
+  }
+
+  finishCellEditing(): void {
+    if (!this.getState().editingCell) return;
+    this.setState({ editingCell: null });
+    this.commitHistory();
+  }
+
+  /** Tab / Shift+Tab / Enter-style navigation. Tab past the last cell appends a row (like word processors). */
+  moveEditingCell(dir: 'next' | 'prev' | 'up' | 'down'): void {
+    const cell = this.getState().editingCell;
+    let el = cell && this.scene.getElement(cell.id);
+    if (!cell || !el || el.type !== 'table') return;
+    let { row, col } = cell;
+    if (dir === 'next') {
+      col++;
+      if (col >= el.cols) {
+        col = 0;
+        row++;
+      }
+    } else if (dir === 'prev') {
+      col--;
+      if (col < 0) {
+        col = el.cols - 1;
+        row--;
+      }
+    } else row += dir === 'down' ? 1 : -1;
+    if (row < 0) return;
+    if (row >= el.rows) {
+      if (dir !== 'next' && dir !== 'down') return;
+      const grown = updateElement(el, insertRow(el, el.rows));
+      this.scene.upsert([grown]);
+      el = grown;
+    }
+    this.commitHistory();
+    this.startCellEditing(el.id, row, col);
+  }
+
+  /** Row/column structure commands for the selected table (at the table cursor, else at the end). */
+  tableCommand(op: 'rowAbove' | 'rowBelow' | 'deleteRow' | 'colLeft' | 'colRight' | 'deleteCol' | 'distribute'): void {
+    const el = this.getSelectedElements().find((e): e is TableElement => e.type === 'table');
+    if (!el || el.locked) return;
+    const cur = this.getTableCursor(el.id) ?? { row: el.rows - 1, col: el.cols - 1 };
+    const patch =
+      op === 'rowAbove' ? insertRow(el, cur.row)
+      : op === 'rowBelow' ? insertRow(el, cur.row + 1)
+      : op === 'deleteRow' ? removeRow(el, cur.row)
+      : op === 'colLeft' ? insertCol(el, cur.col)
+      : op === 'colRight' ? insertCol(el, cur.col + 1)
+      : op === 'deleteCol' ? removeCol(el, cur.col)
+      : distributeColumns(el);
+    if (!Object.keys(patch).length) return;
+    if (op === 'rowBelow') this.tableCursor = { id: el.id, row: cur.row + 1, col: cur.col };
+    if (op === 'colRight') this.tableCursor = { id: el.id, row: cur.row, col: cur.col + 1 };
+    this.scene.upsert([updateElement(el, patch)]);
+    this.commitHistory();
+  }
+
+  /** Table settings: updates the defaults for new tables AND every selected table. */
+  updateTable(patch: Partial<TableDefaults>): void {
+    this.setState((s) => ({ tableDefaults: { ...s.tableDefaults, ...patch } }));
+    const tables = this.getSelectedElements().filter((e): e is TableElement => e.type === 'table' && !e.locked);
+    if (!tables.length) return;
+    this.scene.upsert(
+      tables.map((el) => {
+        let next: TableElement = { ...el };
+        if (patch.rows !== undefined || patch.cols !== undefined) {
+          next = { ...next, ...resizeGrid(next, patch.rows ?? next.rows, patch.cols ?? next.cols) } as TableElement;
+        }
+        const { rows: _r, cols: _c, ...rest } = patch;
+        next = { ...next, ...rest };
+        return updateElement(el, { ...next, ...relayout(next) });
+      }),
+    );
+    this.commitHistory();
+  }
+
+  // ───────────────────────────── Commands ─────────────────────────────
+
+  undo(): void {
+    this.history.undo();
+    this.pruneSelection();
+  }
+
+  redo(): void {
+    this.history.redo();
+    this.pruneSelection();
+  }
+
+  private pruneSelection(): void {
+    const ids = Object.keys(this.getState().selectedIds).filter((id) => {
+      const el = this.scene.getElement(id);
+      return el && !el.isDeleted;
+    });
+    this.setSelection(ids);
+  }
+
+  deleteSelected(): void {
+    const sel = this.getSelectedElements().filter((e) => !e.locked);
+    if (!sel.length) return;
+    this.scene.upsert(sel.map((e) => updateElement(e, { isDeleted: true })));
+    this.setSelection([]);
+    this.commitHistory();
+  }
+
+  duplicateSelected(offset: Point = { x: 16, y: 16 }): void {
+    const sel = this.getSelectedElements();
+    if (!sel.length) return;
+    let z = this.nextZIndex();
+    const clones = sel.map((e) => cloneElement(e, offset, z++));
+    this.scene.upsert(clones);
+    this.setSelection(clones.map((c) => c.id));
+    this.commitHistory();
+  }
+
+  selectAll(): void {
+    this.setTool('selection');
+    this.setSelection(this.scene.getElements().map((e) => e.id));
+  }
+
+  nudgeSelected(dx: number, dy: number): void {
+    const sel = this.getSelectedElements().filter((e) => !e.locked);
+    if (!sel.length) return;
+    this.scene.upsert(sel.map((e) => updateElement(e, { x: e.x + dx, y: e.y + dy })));
+    this.commitHistory();
+  }
+
+  toggleLockSelected(): void {
+    const sel = this.getSelectedElements();
+    if (!sel.length) return;
+    const lock = !sel.every((e) => e.locked);
+    this.scene.upsert(sel.map((e) => updateElement(e, { locked: lock })));
+    this.commitHistory();
+  }
+
+  /** Reorders the selection using fractional z-indices (no need to rewrite other elements). */
+  reorderSelected(direction: 'front' | 'back' | 'forward' | 'backward'): void {
+    const sel = this.getSelectedElements();
+    if (!sel.length) return;
+    const ids = new Set(sel.map((e) => e.id));
+    const all = this.scene.getElements();
+    const others = all.filter((e) => !ids.has(e.id));
+    let lo: number;
+    let hi: number;
+    if (direction === 'front') {
+      lo = this.scene.maxZIndex();
+      hi = lo + 2;
+    } else if (direction === 'back') {
+      hi = this.scene.minZIndex();
+      lo = hi - 2;
+    } else {
+      const top = Math.max(...sel.map((e) => e.zIndex));
+      const bottom = Math.min(...sel.map((e) => e.zIndex));
+      if (direction === 'forward') {
+        const above = others.filter((e) => e.zIndex > top);
+        if (!above.length) return;
+        lo = above[0].zIndex;
+        hi = above[1]?.zIndex ?? lo + 2;
+      } else {
+        const below = others.filter((e) => e.zIndex < bottom);
+        if (!below.length) return;
+        hi = below[below.length - 1].zIndex;
+        lo = below[below.length - 2]?.zIndex ?? hi - 2;
+      }
+    }
+    const step = (hi - lo) / (sel.length + 1);
+    this.scene.upsert(sel.map((e, i) => updateElement(e, { zIndex: lo + step * (i + 1) })));
+    this.commitHistory();
+  }
+
+  copySelected(cut = false): void {
+    const sel = this.getSelectedElements();
+    if (!sel.length) return;
+    this.clipboard = sel;
+    const files = fileStore.pick(this.referencedFileIds(sel));
+    const payload = JSON.stringify({ type: CLIPBOARD_MARKER, elements: sel, files });
+    navigator.clipboard?.writeText(payload).catch(() => undefined);
+    if (cut) this.deleteSelected();
+  }
+
+  /** Paste from the menu/button (keyboard paste goes through the native paste event → handlePaste). */
+  async paste(at?: Point): Promise<void> {
+    try {
+      // Async Clipboard API: images copied from other apps / screenshots
+      const items = (await navigator.clipboard?.read?.()) ?? [];
+      for (const item of items) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (type) {
+          const blob = await item.getType(type);
+          return this.insertImages([new File([blob], 'pasted-image', { type })], at);
+        }
+      }
+      const text = await navigator.clipboard?.readText();
+      if (text) {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        return this.handlePaste(dt);
+      }
+    } catch {
+      /* permission denied - fall back to the internal clipboard */
+    }
+    return this.pasteElements(this.clipboard, at);
+  }
+
+  private pasteElements(source: readonly SketchElement[], at?: Point): void {
+    if (!source.length) return;
+    const b = unionBounds(source.map((e) => elementRegistry.get(e).getBounds(e)))!;
+    const target = at ?? this.lastPointer ?? this.viewportCenter();
+    const offset = { x: target.x - (b.x + b.width / 2), y: target.y - (b.y + b.height / 2) };
+    let z = this.nextZIndex();
+    const clones = source.map((e) => cloneElement(e, offset, z++));
+    this.scene.upsert(clones);
+    this.setTool('selection');
+    this.setSelection(clones.map((c) => c.id));
+    this.commitHistory();
+  }
+
+  clearCanvas(): void {
+    const live = this.scene.getElements();
+    if (!live.length) return;
+    this.scene.upsert(live.map((e) => updateElement(e, { isDeleted: true })));
+    this.setSelection([]);
+    this.commitHistory();
+  }
+
+  // ───────────────────────────── Viewport ─────────────────────────────
+
+  private viewportCenter(): Point {
+    return screenToWorld(this.size.width / 2, this.size.height / 2, this.getViewport());
+  }
+
+  zoomAt(zoom: number, anchor: Point = { x: this.size.width / 2, y: this.size.height / 2 }): void {
+    const v = this.getViewport();
+    const z = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+    const world = screenToWorld(anchor.x, anchor.y, v);
+    this.setState({ viewport: { zoom: z, scrollX: anchor.x / z - world.x, scrollY: anchor.y / z - world.y } });
+  }
+
+  zoomIn = () => this.zoomAt(this.getViewport().zoom * 1.2);
+  zoomOut = () => this.zoomAt(this.getViewport().zoom / 1.2);
+  resetZoom = () => this.zoomAt(1);
+
+  /** Fits the drawing (or the page, if empty) into view. */
+  zoomToFit(target?: Bounds | null): void {
+    const b = target ?? contentBounds(this.scene.getElements(), 40) ?? getPageBounds(this.getState().pageSetup);
+    if (!b || !this.size.width) return;
+    const zoom = clamp(Math.min(this.size.width / b.width, this.size.height / b.height) * 0.9, MIN_ZOOM, 3);
+    this.setState({
+      viewport: {
+        zoom,
+        scrollX: this.size.width / 2 / zoom - (b.x + b.width / 2),
+        scrollY: this.size.height / 2 / zoom - (b.y + b.height / 2),
+      },
+    });
+  }
+
+  /** Case-insensitive search over text elements, in reading order (top-to-bottom, left-to-right). */
+  /** Case-insensitive search over text elements and table cells, in reading order. */
+  findText(query: string): Array<{ el: SketchElement; text: string; cell?: { row: number; col: number } }> {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const hits: Array<{ el: SketchElement; text: string; cell?: { row: number; col: number } }> = [];
+    for (const e of this.scene.getElements()) {
+      if (e.type === 'text' && e.text.toLowerCase().includes(q)) hits.push({ el: e, text: e.text });
+      if (e.type === 'table') {
+        e.cells.forEach((row, r) =>
+          row.forEach((t, c) => {
+            if (t.toLowerCase().includes(q)) hits.push({ el: e, text: t, cell: { row: r, col: c } });
+          }),
+        );
+      }
+    }
+    return hits.sort((a, b) => a.el.y - b.el.y || a.el.x - b.el.x);
+  }
+
+  /** Selects an element and pans/zooms so it is comfortably in view. */
+  focusElement(id: string): void {
+    const el = this.scene.getElement(id);
+    if (!el || el.isDeleted) return;
+    this.setTool('selection');
+    this.setSelection([id]);
+    const b = elementRegistry.get(el).getBounds(el);
+    const pad = Math.max(120, Math.max(b.width, b.height));
+    const zoom = this.getViewport().zoom;
+    const target = { x: b.x - pad, y: b.y - pad, width: b.width + pad * 2, height: b.height + pad * 2 };
+    // keep the current zoom if the element already fits, otherwise zoom out just enough
+    const fitZoom = Math.min(this.size.width / target.width, this.size.height / target.height);
+    const z = clamp(Math.min(zoom, Math.max(fitZoom, 0.25)), MIN_ZOOM, MAX_ZOOM);
+    this.setState({
+      viewport: {
+        zoom: z,
+        scrollX: this.size.width / 2 / z - (b.x + b.width / 2),
+        scrollY: this.size.height / 2 / z - (b.y + b.height / 2),
+      },
+    });
+  }
+
+  zoomToPage(): void {
+    this.zoomToFit(getPageBounds(this.getState().pageSetup));
+  }
+
+  // ───────────────────────────── Page navigation ─────────────────────────────
+
+  private pageHighlight: { index: number; start: number } | null = null;
+
+  /** Scrolls/zooms so page `index` fills the view and briefly highlights it (PDF-viewer style). */
+  goToPage(index: number): void {
+    const rects = pageRects(this.getState().pageSetup, this.getPageCount());
+    const r = rects[Math.max(0, Math.min(rects.length - 1, index))];
+    if (!r) return;
+    this.zoomToFit({ x: r.x - 24, y: r.y - 24, width: r.width + 48, height: r.height + 48 });
+    this.pageHighlight = { index: rects.indexOf(r), start: performance.now() };
+    this.requestRender();
+  }
+
+  /** Page whose area is closest to the centre of the screen. */
+  currentPageIndex(): number {
+    const rects = pageRects(this.getState().pageSetup, this.getPageCount());
+    if (!rects.length) return 0;
+    const c = this.viewportCenter();
+    let best = 0;
+    let bestDist = Infinity;
+    rects.forEach((r, i) => {
+      const dy = c.y < r.y ? r.y - c.y : c.y > r.y + r.height ? c.y - (r.y + r.height) : 0;
+      if (dy < bestDist) {
+        bestDist = dy;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  private drawPageHighlight(ctx: CanvasRenderingContext2D, zoom: number): void {
+    const h = this.pageHighlight;
+    if (!h) return;
+    const t = (performance.now() - h.start) / 1400;
+    const r = pageRects(this.getState().pageSetup, this.getPageCount())[h.index];
+    if (t >= 1 || !r) {
+      this.pageHighlight = null;
+      return;
+    }
+    const alpha = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#5b5bd6';
+    ctx.shadowColor = 'rgba(91, 91, 214, 0.6)';
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = 4 / zoom;
+    const pad = 3 / zoom;
+    ctx.strokeRect(r.x - pad, r.y - pad, r.width + pad * 2, r.height + pad * 2);
+    ctx.restore();
+  }
+
+  // ───────────────────────────── Persistence ─────────────────────────────
+
+  /** `withFiles` embeds image data (for .sketchboard files & collaboration); autosave keeps it in IndexedDB. */
+  getSceneData(includeDeleted = false, withFiles = false): SceneData {
+    const data = serializeScene(this.scene.getAllElements(), this.getState(), includeDeleted);
+    if (withFiles) data.files = fileStore.pick(this.referencedFileIds(data.elements));
+    return data;
+  }
+
+  referencedFileIds(elements: readonly SketchElement[] = this.scene.getElements()): string[] {
+    return elements.flatMap((e) => (e.type === 'image' ? [e.fileId] : []));
+  }
+
+  loadScene(data: SceneData, opts: { keepViewport?: boolean } = {}): void {
+    // Imported elements get fresh versions so they win over any stale peer copies.
+    if (data.files) fileStore.add(Object.values(data.files));
+    const elements = data.elements.map((e) => ({ ...e, versionNonce: randomInteger() }));
+    this.scene.replaceAll(elements, 'load');
+    const a = data.appState ?? {};
+    this.setState((s) => ({
+      selectedIds: {},
+      editingTextId: null,
+      pageSetup: a.pageSetup ?? s.pageSetup,
+      gridEnabled: a.gridEnabled ?? s.gridEnabled,
+      viewColorMode: a.viewColorMode ?? s.viewColorMode,
+      viewport: !opts.keepViewport && a.viewport ? a.viewport : s.viewport,
+    }));
+    this.history.clear();
+    shapeCache.prune(new Set(elements.map((e) => e.id)));
+  }
+
+  async restoreFromStorage(): Promise<boolean> {
+    const data = await this.storage.load();
+    if (data) {
+      this.loadScene(data);
+      await fileStore.loadFromDb(this.referencedFileIds());
+    }
+    return !!data;
+  }
+
+  /** Swaps the persistence backend. `persistCurrent` first writes the scene to the old one. */
+  setStorage(adapter: StorageAdapter, persistCurrent = true): void {
+    this.autosave.flush();
+    if (persistCurrent) void this.storage.save(this.getSceneData());
+    this.storage = adapter;
+  }
+
+  flushSave(): void {
+    this.autosave.flush();
+    void this.storage.save(this.getSceneData());
+  }
+
+  /** Ctrl/Cmd+B, I, U - works while typing and on selected text elements. */
+  toggleTextFormat(kind: 'bold' | 'italic' | 'underline'): void {
+    const editing = this.getState().editingTextId;
+    const targets = editing ? [editing] : this.getSelectedElements().filter((e) => e.type === 'text').map((e) => e.id);
+    const first = targets.length ? (this.scene.getElement(targets[0]) as TextElement) : undefined;
+    const s = first ?? this.getState().currentStyle;
+    const patch: Partial<CurrentStyle> =
+      kind === 'bold'
+        ? { fontWeight: s.fontWeight === 'bold' ? 'normal' : 'bold' }
+        : kind === 'italic'
+          ? { fontStyle: s.fontStyle === 'italic' ? 'normal' : 'italic' }
+          : { underline: !s.underline };
+    if (!editing) return this.updateStyle(patch);
+    const prev = Object.keys(this.getState().selectedIds);
+    this.setSelection([editing]);
+    this.updateStyle(patch);
+    this.setSelection(prev);
+  }
+
+  /**
+   * Text boxes measured before their web font loaded have the fallback font's size; fix them up.
+   * Width/height are derived data, so the version isn't bumped (no sync/undo noise).
+   */
+  refreshTextMetrics(): void {
+    const fixed: SketchElement[] = [];
+    for (const el of this.scene.getElements()) {
+      if (el.type === 'table') {
+        const next = relayout(el);
+        if (Math.abs(next.height - el.height) > 0.5) fixed.push({ ...el, ...next });
+        continue;
+      }
+      if (el.type !== 'text' || el.id === this.getState().editingTextId) continue;
+      const m = measureText(el.text || ' ', el.fontSize, el.fontFamily, el);
+      if (Math.abs(m.width - el.width) > 0.5 || Math.abs(m.height - el.height) > 0.5) {
+        fixed.push({ ...el, width: m.width, height: m.height });
+      }
+    }
+    if (fixed.length) this.scene.upsert(fixed, 'load');
+  }
+
+  // ───────────────────────────── Images & clipboard ─────────────────────────────
+
+  /** Inserts image files (picker, paste or drag & drop), centred at `at` or the viewport. */
+  async insertImages(files: readonly File[], at?: Point): Promise<void> {
+    const images = files.filter((f) => f.type.startsWith('image/'));
+    if (!images.length) return;
+    const v = this.getViewport();
+    let center = at ?? this.lastPointer ?? this.viewportCenter();
+    const created: SketchElement[] = [];
+    let z = this.nextZIndex();
+    for (const file of images) {
+      try {
+        const { file: bin, width, height } = await imageFileToBinary(file);
+        fileStore.add([bin]);
+        // fit within half of the visible area
+        const maxW = (this.size.width / v.zoom) * 0.5 || 600;
+        const maxH = (this.size.height / v.zoom) * 0.5 || 400;
+        const s = Math.min(1, maxW / width, maxH / height);
+        const w = width * s;
+        const h = height * s;
+        created.push(createImage(bin.id, { x: center.x - w / 2, y: center.y - h / 2, width: w, height: h }, z++));
+        center = { x: center.x + 24, y: center.y + 24 };
+      } catch (e) {
+        this.toast(`Could not insert ${file.name || 'image'}: ${(e as Error).message}`);
+      }
+    }
+    if (!created.length) return;
+    this.scene.upsert(created);
+    this.setTool('selection');
+    this.setSelection(created.map((c) => c.id));
+    this.commitHistory();
+  }
+
+  pickImages(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = () => void this.insertImages([...(input.files ?? [])], this.viewportCenter());
+    input.click();
+  }
+
+  /**
+   * System paste (Ctrl/Cmd+V, long-press → Paste on tablets): images, SketchBoard elements,
+   * or plain text (becomes a text element).
+   */
+  async handlePaste(data: DataTransfer | null): Promise<void> {
+    if (!data) return;
+    const files = [...data.files].filter((f) => f.type.startsWith('image/'));
+    if (files.length) return this.insertImages(files);
+    const text = data.getData('text/plain');
+    if (text.includes(CLIPBOARD_MARKER)) {
+      try {
+        const parsed = JSON.parse(text) as { elements: SketchElement[]; files?: Record<string, BinaryFile> };
+        if (parsed.files) fileStore.add(Object.values(parsed.files));
+        return this.pasteElements(parseScene({ type: 'sketchboard', elements: parsed.elements }).elements);
+      } catch {
+        /* fall through to plain text */
+      }
+    }
+    if (!text.trim() && this.clipboard.length) return this.pasteElements(this.clipboard);
+    if (text.trim()) {
+      const at = this.lastPointer ?? this.viewportCenter();
+      const el = createText(this.getState().currentStyle, at, this.nextZIndex(), text.replace(/\r\n/g, '\n').slice(0, 10_000));
+      this.scene.upsert([el]);
+      this.setTool('selection');
+      this.setSelection([el.id]);
+      this.commitHistory();
+    }
+  }
+
+  toast(message: string): void {
+    this.setState({ toast: { id: Date.now(), message } });
+  }
+}
