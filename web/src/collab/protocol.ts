@@ -17,6 +17,7 @@ export type PeerPayload =
   | { kind: 'request-scene' }
   | { kind: 'scene-init'; elements: SketchElement[]; files?: BinaryFile[] }
   | { kind: 'scene-update'; elements: SketchElement[]; files?: BinaryFile[] }
-  | { kind: 'laser'; points: Array<{ x: number; y: number; start: boolean }> }
+  /** Laser trail points; `size`/`mode` mirror the sender's settings, `end` = pen released (hold trails start fading). */
+  | { kind: 'laser'; points: Array<{ x: number; y: number; start: boolean }>; size?: number; mode?: 'fade' | 'hold'; end?: boolean }
   | { kind: 'pointer'; pointer: Point; username: string }
   | { kind: 'chat'; id: string; text: string; username: string; at: number };

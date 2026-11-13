@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { PagesPanel } from './PagesPanel';
+import { LibraryPanel } from './LibraryPanel';
 import { STORAGE_KEYS } from '../../core/constants';
 import type { SidebarTab } from '../../core/types';
 import { useAppState, useEditor, useSceneRevision } from '../EditorContext';
@@ -128,9 +129,10 @@ function SearchPanel() {
       )}
       <ul className="sb-search__results">
         {results.map((hit, i) => (
-          <li key={`${hit.el.id}:${hit.cell?.row ?? ''}:${hit.cell?.col ?? ''}`}>
+          <li key={`${hit.el.id}:${hit.cell?.row ?? ''}:${hit.cell?.col ?? ''}:${hit.line ?? ''}`}>
             <button className={i === active ? 'is-active' : ''} onClick={() => go(i)}>
               {hit.cell && <small className="sb-search__where">Table · row {hit.cell.row + 1}, col {hit.cell.col + 1}</small>}
+              {hit.line && <small className="sb-search__where">Code · line {hit.line}</small>}
               <Snippet text={hit.text} query={query} />
             </button>
           </li>
@@ -153,18 +155,6 @@ function Snippet({ text: raw, query }: { text: string; query: string }) {
       {text.slice(i + q, i + q + 40)}
       {i + q + 40 < text.length && '…'}
     </span>
-  );
-}
-
-function LibraryPanel() {
-  return (
-    <div className="sb-empty">
-      <div className="sb-empty__art">
-        <Icons.library />
-      </div>
-      <p className="sb-empty__title">Libraries are coming soon</p>
-      <p className="sb-muted">Reusable shape sets (flowchart symbols, UI kits, icons) will live here. You’ll be able to drag them onto the canvas.</p>
-    </div>
   );
 }
 

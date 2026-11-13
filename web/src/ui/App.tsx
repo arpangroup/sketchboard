@@ -14,21 +14,49 @@ import { PropertiesPanel } from './components/PropertiesPanel';
 import { Sidebar, stopPresentation } from './components/Sidebar';
 import { TextEditorOverlay } from './components/TextEditorOverlay';
 import { CellEditorOverlay } from './components/CellEditorOverlay';
+import { CodeEditorOverlay } from './components/CodeEditorOverlay';
 import { Toolbar } from './components/Toolbar';
 import { EditorContext, type EditorServices, useAppState, useEditor } from './EditorContext';
 import { InstallDialog, PwaBanners } from './components/Pwa';
 import { onLaunchFiles } from '../pwa/pwa';
-import { parseScene } from '../persistence/serialization';
+import { describeImport, isSceneFile, parseAnyScene } from '../persistence/importScene';
+import { WorkspaceService } from '../cloud/WorkspaceService';
+import { LibraryStore } from '../library/LibraryStore';
+import { isLibraryFileName } from '../library/libraryFormat';
+import { libraryActions, workspaceActions } from '../actions/serviceActions';
+import { WorkspaceDialog } from './components/dialogs/WorkspaceDialog';
+import { LinkDialog } from './components/dialogs/LinkDialog';
+import { LIBRARY_DRAG_MIME } from './components/LibraryPanel';
 
 /** Composition root: builds the object graph once and injects it via context. */
 function createServices(): EditorServices {
   const editor = new Editor();
-  return { editor, actions: new ActionManager(editor), collab: new CollabSession(editor) };
+  const actions = new ActionManager(editor);
+  const workspace = new WorkspaceService(editor);
+  const library = new LibraryStore();
+  [...workspaceActions(workspace), ...libraryActions(library)].forEach((a) => actions.register(a));
+  return { editor, actions, collab: new CollabSession(editor), workspace, library };
+}
+
+/** #addLibrary=<url> — sent back by libraries.excalidraw.com's "Add to Excalidraw" button. */
+async function addLibraryFromHash(services: EditorServices): Promise<void> {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const url = params.get('addLibrary');
+  if (!url) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const { editor, library } = services;
+  try {
+    const n = await library.importFromUrl(url);
+    editor.toast(n ? `Added ${n} item${n === 1 ? '' : 's'} to your library` : 'Those library items are already in your library');
+    editor.setState((s) => ({ sidebar: { ...s.sidebar, open: true, tab: 'library' } }));
+  } catch (e) {
+    editor.toast(`Couldn’t add the library: ${(e as Error).message}`);
+  }
 }
 
 export default function App() {
   const services = useMemo(createServices, []);
-  const { editor, collab } = services;
+  const { editor, collab, workspace } = services;
 
   useEffect(() => {
     try {
@@ -36,6 +64,8 @@ export default function App() {
       if (theme) editor.setState({ theme });
       if (localStorage.getItem(STORAGE_KEYS.penMode) === 'true') editor.setState({ penMode: true });
       if (localStorage.getItem(STORAGE_KEYS.shapeRecognition) === 'true') editor.setState({ shapeRecognition: true });
+      const laser = JSON.parse(localStorage.getItem(STORAGE_KEYS.laser) ?? 'null') as { mode?: string; size?: number } | null;
+      if (laser) editor.setState({ laser: { mode: laser.mode === 'hold' ? 'hold' : 'fade', size: Math.min(4, Math.max(1, Number(laser.size) || 2)) } });
       if (localStorage.getItem(STORAGE_KEYS.sidebarPinned) === 'true') {
         editor.setState((s) => ({ sidebar: { ...s.sidebar, pinned: true } }));
       }
@@ -46,19 +76,24 @@ export default function App() {
     (async () => {
       if (parseRoomFromHash()) {
         await collab.joinFromUrl();
-      } else if (await editor.restoreFromStorage()) {
-        // keep the saved viewport
-      } else if (!cancelled && editor.getState().pageSetup.size !== 'infinite') {
-        requestAnimationFrame(() => editor.zoomToPage());
+      } else {
+        if (await editor.restoreFromStorage()) {
+          workspace.restoreLink(); // keep the saved viewport + workspace link
+        } else if (!cancelled && editor.getState().pageSetup.size !== 'infinite') {
+          requestAnimationFrame(() => editor.zoomToPage());
+        }
+        await workspace.openLinkFromHash(); // #json=… export link
       }
+      await addLibraryFromHash(services);
     })().catch((e) => editor.toast(`Startup error: ${(e as Error).message}`));
 
     // Installed app: .sketchboard files opened from the OS arrive through the launch queue.
     onLaunchFiles(async (file) => {
       try {
-        editor.loadScene(parseScene(await file.text()));
+        const opened = parseAnyScene(await file.text());
+        editor.loadScene(opened.scene);
         editor.zoomToFit();
-        editor.toast(`Opened ${file.name}`);
+        editor.toast(describeImport(file.name, opened));
       } catch (e) {
         editor.toast(`Could not open ${file.name}: ${(e as Error).message}`);
       }
@@ -74,6 +109,8 @@ export default function App() {
 
     const onHash = () => {
       if (parseRoomFromHash() && !collab.active) void collab.joinFromUrl();
+      void workspace.openLinkFromHash();
+      void addLibraryFromHash(services);
     };
     const onUnload = () => editor.flushSave();
     window.addEventListener('hashchange', onHash);
@@ -85,7 +122,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibility);
       collab.stop(false);
     };
-  }, [editor, collab]);
+  }, [editor, collab, workspace, services]);
 
   return (
     <EditorContext.Provider value={services}>
@@ -95,7 +132,7 @@ export default function App() {
 }
 
 function Shell() {
-  const { editor } = useEditor();
+  const { editor, library } = useEditor();
   const theme = useAppState((s) => s.theme);
   const dialog = useAppState((s) => s.openDialog);
   const sidebar = useAppState((s) => s.sidebar);
@@ -106,7 +143,7 @@ function Shell() {
   // System paste: images (screenshots, copied pictures), SketchBoard elements, or plain text.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      if (isTyping(e.target) || editor.getState().openDialog || editor.getState().editingTextId) return;
+      if (isTyping(e.target) || editor.getState().openDialog || editor.getState().editingTextId || editor.getState().editingCodeId) return;
       e.preventDefault();
       void editor.handlePaste(e.clipboardData);
     };
@@ -115,6 +152,7 @@ function Shell() {
   }, [editor]);
 
   const hasImageFiles = (e: DragEvent) => [...e.dataTransfer.items].some((i) => i.kind === 'file');
+  const isLibraryDrag = (e: DragEvent) => e.dataTransfer.types.includes(LIBRARY_DRAG_MIME);
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
@@ -122,13 +160,39 @@ function Shell() {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const v = editor.getViewport();
     const at = { x: (e.clientX - rect.left) / v.zoom - v.scrollX, y: (e.clientY - rect.top) / v.zoom - v.scrollY };
-    const scene = files.find((f) => f.name.endsWith('.sketchboard') || f.type === 'application/json');
+    // an item dragged out of the library sidebar
+    const dragged = e.dataTransfer.getData(LIBRARY_DRAG_MIME);
+    if (dragged) {
+      try {
+        const { source, id } = JSON.parse(dragged) as { source: 'personal' | 'builtin'; id: string };
+        const item = library.find(source, id);
+        if (item) editor.insertLibraryItem(item.elements, at);
+      } catch {
+        /* ignore malformed drag data */
+      }
+      return;
+    }
+    const libFile = files.find((f) => isLibraryFileName(f.name));
+    if (libFile) {
+      libFile
+        .text()
+        .then((t) => {
+          const n = library.importLibrary(t);
+          editor.toast(n ? `Added ${n} item${n === 1 ? '' : 's'} from ${libFile.name} to your library` : 'Those items are already in your library');
+          editor.setState((s) => ({ sidebar: { ...s.sidebar, open: true, tab: 'library' } }));
+        })
+        .catch((err) => editor.toast(`Could not import ${libFile.name}: ${(err as Error).message}`));
+      return;
+    }
+    const scene = files.find(isSceneFile);
     if (scene) {
       scene
         .text()
         .then((t) => {
-          editor.loadScene(parseScene(t));
+          const opened = parseAnyScene(t);
+          editor.loadScene(opened.scene);
           editor.zoomToFit();
+          editor.toast(describeImport(scene.name, opened));
         })
         .catch((err) => editor.toast(`Could not open ${scene.name}: ${(err as Error).message}`));
       return;
@@ -160,6 +224,8 @@ function Shell() {
     collab: <CollabDialog onClose={close} />,
     help: <HelpDialog onClose={close} />,
     install: <InstallDialog onClose={close} />,
+    workspace: <WorkspaceDialog onClose={close} />,
+    link: <LinkDialog onClose={close} />,
   };
 
   return (
@@ -168,6 +234,11 @@ function Shell() {
       <main
         className="sb-stage"
         onDragOver={(e) => {
+          if (isLibraryDrag(e)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            return;
+          }
           if (!hasImageFiles(e)) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'copy';
@@ -178,10 +249,11 @@ function Shell() {
         }}
         onDrop={onDrop}
       >
-        {dragging && <div className="sb-drop-hint">Drop images here</div>}
+        {dragging && <div className="sb-drop-hint">Drop images, drawings or libraries here</div>}
         <Canvas />
         <TextEditorOverlay />
         <CellEditorOverlay />
+        <CodeEditorOverlay />
         {presenting ? (
           <button className="sb-island sb-btn sb-present-exit" onClick={() => stopPresentation(editor)}>
             Exit presentation <kbd>Esc</kbd>

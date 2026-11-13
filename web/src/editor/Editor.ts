@@ -15,8 +15,15 @@ import type {
   TextElement,
   ToolType,
   Viewport,
+  WorkspaceFileRef,
+  FigureElement,
+  CodeElement,
+  CodeMark,
 } from '../core/types';
-import { cloneElement, createImage, createText, updateElement } from '../elements/factory';
+import { codeLayout, resetCodeMetrics } from '../elements/code/codeLayout';
+import { angleOf, bakesRotation, centerOf, keepTopLeft, normalizeAngle, rotateAround } from '../elements/rotation';
+import { getFigure } from '../elements/figures/figures';
+import { cloneElement, createCode, createImage, createText, updateElement } from '../elements/factory';
 import {
   distributeColumns,
   insertCol,
@@ -31,13 +38,14 @@ import { fileStore, imageFileToBinary } from '../files/FileStore';
 import { LaserLayer } from '../renderer/LaserLayer';
 import { STORAGE_KEYS } from '../core/constants';
 import { ensureFontLoaded } from '../core/fonts';
-import { elementRegistry } from '../elements/registry';
+import { getElementBounds, hitTestElement } from '../elements/registry';
 import { measureText } from '../elements/textMetrics';
 import { contentBounds } from '../export/region';
 import { getPageBounds } from '../page/pageSizes';
 import { type PageDecoration, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
 import { LocalStorageAdapter, type StorageAdapter } from '../persistence/StorageAdapter';
 import { parseScene, serializeScene } from '../persistence/serialization';
+import { fromExcalidraw } from '../persistence/excalidraw';
 import { CanvasRenderer, screenToWorld } from '../renderer/CanvasRenderer';
 import { shapeCache } from '../renderer/ShapeCache';
 import { History } from '../scene/History';
@@ -52,6 +60,13 @@ const PALM_COOLDOWN_MS = 1200;
 const PALM_CONTACT_PX = 40;
 
 /** Style keys that can be applied directly to any element. */
+/** Size changes of rotated elements keep the top-left corner where it is on screen. */
+function anchored<T extends SketchElement>(el: T, patch: Partial<T>): Partial<T> {
+  if (!angleOf(el) || (patch.width === undefined && patch.height === undefined)) return patch;
+  const next = { ...el, ...patch };
+  return { ...patch, ...keepTopLeft(el, next) };
+}
+
 const COMMON_STYLE_KEYS = [
   'strokeColor', 'backgroundColor', 'fillStyle', 'strokeWidth', 'strokeStyle', 'roughness', 'opacity',
 ] as const;
@@ -65,7 +80,11 @@ export class Editor implements ToolContext {
   readonly store = new Store<AppState>(createInitialAppState());
   readonly scene = new Scene();
   readonly history = new History(this.scene);
-  readonly events = new Emitter<{ pointerMove: Point; laser: { point: Point; start: boolean } }>();
+  readonly events = new Emitter<{
+    pointerMove: Point;
+    laser: { point: Point; start: boolean; size: number; mode: 'fade' | 'hold' };
+    laserEnd: { size: number; mode: 'fade' | 'hold' };
+  }>();
   /** Laser pointer trails (local + collaborators) - visual only. */
   readonly laser = new LaserLayer();
   /** The one pointer currently driving a tool gesture (palm rejection / multi-touch safety). */
@@ -104,6 +123,7 @@ export class Editor implements ToolContext {
       for (const el of changed) {
         if (el.isDeleted) continue;
         if (el.type === 'text') void ensureFontLoaded(el.fontFamily, el.fontWeight, el.fontStyle);
+        if (el.type === 'code') void ensureFontLoaded('code');
         if (el.type === 'table') void ensureFontLoaded(el.fontFamily, 'bold');
       }
     });
@@ -143,7 +163,7 @@ export class Editor implements ToolContext {
     for (let i = els.length - 1; i >= 0; i--) {
       const el = els[i];
       if (el.id === editing) continue;
-      if (elementRegistry.get(el).hitTest(el, world, tolerance)) return el;
+      if (hitTestElement(el, world, tolerance)) return el;
     }
     return null;
   };
@@ -209,6 +229,8 @@ export class Editor implements ToolContext {
     if (editing) ids.add(editing);
     const cell = this.getState().editingCell;
     if (cell) ids.add(cell.id);
+    const code = this.getState().editingCodeId;
+    if (code) ids.add(code);
     return ids;
   }
 
@@ -269,10 +291,29 @@ export class Editor implements ToolContext {
   }
 
   emitLaser = (world: Point, start: boolean): void => {
-    this.laser.add('local', '#ff3b30', world, start);
-    this.events.emit('laser', { point: world, start });
+    const { mode, size } = this.getState().laser;
+    this.laser.add('local', '#ff3b30', world, start, { mode, size });
+    this.events.emit('laser', { point: world, start, mode, size });
     this.requestRender();
   };
+
+  /** Pen / mouse lifted: a "keep until release" trail starts fading (for collaborators too). */
+  releaseLaser = (): void => {
+    const { mode, size } = this.getState().laser;
+    this.laser.release('local');
+    this.events.emit('laserEnd', { mode, size });
+    this.requestRender();
+  };
+
+  /** Laser settings (remembered on this device). */
+  setLaser(patch: Partial<AppState['laser']>): void {
+    this.setState((s) => ({ laser: { ...s.laser, ...patch } }));
+    try {
+      localStorage.setItem(STORAGE_KEYS.laser, JSON.stringify(this.getState().laser));
+    } catch {
+      /* storage unavailable */
+    }
+  }
 
   // ───────────────────────────── Input handling ─────────────────────────────
 
@@ -304,7 +345,7 @@ export class Editor implements ToolContext {
    */
   handlePointerDown = (e: PointerEvent): void => {
     if (!this.canvas) return;
-    if (this.getState().editingTextId || this.getState().editingCell) {
+    if (this.getState().editingTextId || this.getState().editingCell || this.getState().editingCodeId) {
       (document.activeElement as HTMLElement | null)?.blur();
     }
     const info = this.toPointerInfo(e);
@@ -533,10 +574,39 @@ export class Editor implements ToolContext {
     const prev = this.activeTool();
     if (prev.type === type) return;
     prev.onDeactivate?.();
-    this.setState({ activeTool: type, ...(type !== 'selection' ? { selectedIds: {} } : {}) });
+    this.setState((s) => ({
+      activeTool: type,
+      ...(type !== 'selection' ? { selectedIds: {} } : {}),
+      // the eraser button remembers which eraser was used last
+      ...(type === 'eraser' || type === 'precisionEraser' ? { eraser: { ...s.eraser, mode: type === 'eraser' ? 'stroke' : 'precision' } } : {}),
+    }));
     const next = this.activeTool();
     next.onActivate?.();
     this.setCursor(next.cursor);
+  }
+
+  /** Picks a gallery shape and switches to the figure tool. */
+  setFigure(figure: string): void {
+    this.setState({ currentFigure: figure });
+    this.setTool('figure');
+  }
+
+  /** Swaps the selected gallery figures to another shape, keeping size, style and tail. */
+  changeFigure(figure: string): void {
+    const def = getFigure(figure);
+    if (!def) return;
+    this.setState({ currentFigure: figure });
+    const updates = this.getSelectedElements()
+      .filter((e): e is FigureElement => e.type === 'figure' && !e.locked)
+      .map((e) => updateElement(e, { figure, tail: def.tail ? e.tail ?? { ...def.tail } : undefined }));
+    if (!updates.length) return;
+    this.scene.upsert(updates);
+    this.commitHistory();
+  }
+
+  /** Eraser button / E: the eraser used last (stroke or precision). */
+  setEraser(mode?: 'stroke' | 'precision'): void {
+    this.setTool((mode ?? this.getState().eraser.mode) === 'precision' ? 'precisionEraser' : 'eraser');
   }
 
   /** Updates the "current item" style AND every selected element. */
@@ -583,7 +653,7 @@ export class Editor implements ToolContext {
         const m = measureText(el.text || ' ', next.fontSize, next.fontFamily, next);
         Object.assign(p, next, { width: m.width, height: m.height });
       }
-      return updateElement(el, p as Partial<SketchElement>);
+      return updateElement(el, anchored(el, p as Partial<SketchElement>));
     });
     this.scene.upsert(updates);
     this.commitHistory();
@@ -602,7 +672,7 @@ export class Editor implements ToolContext {
     const m = measureText(text || ' ', el.fontSize, el.fontFamily, el);
     // keep alignment anchor stable while typing
     const dx = el.textAlign === 'center' ? (el.width - m.width) / 2 : el.textAlign === 'right' ? el.width - m.width : 0;
-    this.scene.upsert([updateElement(el, { text, width: m.width, height: m.height, x: el.x + dx })]);
+    this.scene.upsert([updateElement(el, anchored(el, { text, width: m.width, height: m.height, x: el.x + dx }))]);
   }
 
   finishTextEditing(): void {
@@ -620,6 +690,112 @@ export class Editor implements ToolContext {
     if (!this.getState().toolLocked) this.setTool('selection');
     if (this.getState().activeTool === 'selection') this.setSelection([el.id]);
   }
+
+  // ───────────────────────────── Rotation ─────────────────────────────
+
+  /** Turns the selection by `delta` radians around its centre (one undo step). */
+  rotateSelection(delta: number): void {
+    const sel = this.getSelectedElements().filter((e) => !e.locked);
+    if (!sel.length || !delta) return;
+    const b = unionBounds(sel.map(getElementBounds))!;
+    const pivot = sel.length === 1 && !bakesRotation(sel[0]) ? centerOf(sel[0]) : { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    this.scene.upsert(sel.map((el) => updateElement(el, rotateAround(el, delta, pivot))));
+    this.commitHistory();
+  }
+
+  /** Sets the angle (radians) of every selected element that keeps one (shapes, text, images…). */
+  setSelectionAngle(angle: number): void {
+    const sel = this.getSelectedElements().filter((e) => !e.locked && !bakesRotation(e));
+    if (!sel.length) return;
+    this.scene.upsert(sel.map((el) => updateElement(el, { angle: normalizeAngle(angle) })));
+    this.commitHistory();
+  }
+
+  // ───────────────────────────── Code blocks ─────────────────────────────
+
+  /** Adds an empty code block in the middle of the screen (or at `at`) and starts editing it. */
+  insertCode(at?: Point, code = ''): void {
+    void ensureFontLoaded('code');
+    const s = this.getState();
+    const el = createCode(s.currentStyle, s.codeDefaults, { x: 0, y: 0 }, this.nextZIndex(), code);
+    const c = at ?? this.viewportCenter();
+    const placed = { ...el, x: c.x - el.width / 2, y: c.y - el.height / 2 };
+    this.scene.upsert([placed]);
+    this.setTool('selection');
+    this.startCodeEditing(placed.id);
+  }
+
+  startCodeEditing = (id: string): void => {
+    void ensureFontLoaded('code');
+    this.setState({ editingCodeId: id, selectedIds: {} });
+  };
+
+  updateEditingCode(code: string): void {
+    const id = this.getState().editingCodeId;
+    const el = id ? this.scene.getElement(id) : undefined;
+    if (!el || el.type !== 'code') return;
+    const l = codeLayout({ ...el, code });
+    this.scene.upsert([updateElement(el, anchored(el, { code, width: l.width, height: l.height }))]);
+  }
+
+  finishCodeEditing(): void {
+    const id = this.getState().editingCodeId;
+    if (!id) return;
+    const el = this.scene.getElement(id);
+    this.setState({ editingCodeId: null });
+    if (!el || el.type !== 'code') return;
+    if (!el.code.trim()) {
+      this.scene.upsert([updateElement(el, { isDeleted: true })]);
+      this.commitHistory();
+      return;
+    }
+    this.commitHistory();
+    this.setSelection([el.id]);
+  }
+
+  private codeTargets(): CodeElement[] {
+    const editing = this.getState().editingCodeId;
+    const ids = editing ? [editing] : Object.keys(this.getState().selectedIds);
+    return ids.map((id) => this.scene.getElement(id)).filter((e): e is CodeElement => !!e && e.type === 'code' && !e.locked);
+  }
+
+  /** Language / theme / font size / line numbers / title for the selected code blocks (and new ones). */
+  updateCode(patch: Partial<Pick<CodeElement, 'language' | 'theme' | 'fontSize' | 'lineNumbers' | 'showLanguage' | 'title'>>): void {
+    const { title, ...defaults } = patch;
+    if (Object.keys(defaults).length) this.setState((s) => ({ codeDefaults: { ...s.codeDefaults, ...defaults } }));
+    if (patch.fontSize) void ensureFontLoaded('code');
+    const targets = this.codeTargets();
+    if (!targets.length) return;
+    this.scene.upsert(
+      targets.map((el) => {
+        const next = { ...el, ...patch, ...(title !== undefined ? { title: title.slice(0, 120) } : {}) };
+        const l = codeLayout(next);
+        return updateElement(el, anchored(el, { ...patch, title: next.title, width: l.width, height: l.height }));
+      }),
+    );
+    if (!this.getState().editingCodeId) this.commitHistory();
+  }
+
+  /** Marks (or, with null, unmarks) lines of a code block. */
+  setCodeMarks(id: string, lines: number[], color: CodeMark | null): void {
+    const el = this.scene.getElement(id);
+    if (!el || el.type !== 'code' || el.locked) return;
+    const marks = { ...el.marks };
+    for (const n of lines) {
+      if (color) marks[n] = color;
+      else delete marks[n];
+    }
+    this.scene.upsert([updateElement(el, { marks })]);
+    this.commitHistory();
+  }
+
+  /** Clicking a line number: mark it in the current colour, or unmark if it already has that colour. */
+  toggleCodeLine = (id: string, line: number): void => {
+    const el = this.scene.getElement(id);
+    if (!el || el.type !== 'code') return;
+    const color = this.getState().codeDefaults.markColor;
+    this.setCodeMarks(id, [line], el.marks[line] === color ? null : color);
+  };
 
   // ───────────────────────────── Tables ─────────────────────────────
 
@@ -648,7 +824,7 @@ export class Editor implements ToolContext {
     const cell = this.getState().editingCell;
     const el = cell && this.scene.getElement(cell.id);
     if (!cell || !el || el.type !== 'table') return;
-    this.scene.upsert([updateElement(el, setCellText(el, cell.row, cell.col, text))]);
+    this.scene.upsert([updateElement(el, anchored(el, setCellText(el, cell.row, cell.col, text)))]);
   }
 
   finishCellEditing(): void {
@@ -679,7 +855,7 @@ export class Editor implements ToolContext {
     if (row < 0) return;
     if (row >= el.rows) {
       if (dir !== 'next' && dir !== 'down') return;
-      const grown = updateElement(el, insertRow(el, el.rows));
+      const grown = updateElement(el, anchored(el, insertRow(el, el.rows)));
       this.scene.upsert([grown]);
       el = grown;
     }
@@ -703,7 +879,7 @@ export class Editor implements ToolContext {
     if (!Object.keys(patch).length) return;
     if (op === 'rowBelow') this.tableCursor = { id: el.id, row: cur.row + 1, col: cur.col };
     if (op === 'colRight') this.tableCursor = { id: el.id, row: cur.row, col: cur.col + 1 };
-    this.scene.upsert([updateElement(el, patch)]);
+    this.scene.upsert([updateElement(el, anchored(el, patch))]);
     this.commitHistory();
   }
 
@@ -720,7 +896,7 @@ export class Editor implements ToolContext {
         }
         const { rows: _r, cols: _c, ...rest } = patch;
         next = { ...next, ...rest };
-        return updateElement(el, { ...next, ...relayout(next) });
+        return updateElement(el, anchored(el, { ...next, ...relayout(next) }));
       }),
     );
     this.commitHistory();
@@ -853,9 +1029,18 @@ export class Editor implements ToolContext {
     return this.pasteElements(this.clipboard, at);
   }
 
+  /** Inserts a library item (fresh ids), centred on `at` or the middle of the screen, and selects it. */
+  insertLibraryItem(elements: readonly SketchElement[], at?: Point): void {
+    const live = elements.filter((e) => !e.isDeleted);
+    if (!live.length) return;
+    const fileIds = this.referencedFileIds(live).filter((id) => !fileStore.has(id));
+    if (fileIds.length) void fileStore.loadFromDb(fileIds);
+    this.pasteElements(live, at ?? this.viewportCenter());
+  }
+
   private pasteElements(source: readonly SketchElement[], at?: Point): void {
     if (!source.length) return;
-    const b = unionBounds(source.map((e) => elementRegistry.get(e).getBounds(e)))!;
+    const b = unionBounds(source.map(getElementBounds))!;
     const target = at ?? this.lastPointer ?? this.viewportCenter();
     const offset = { x: target.x - (b.x + b.width / 2), y: target.y - (b.y + b.height / 2) };
     let z = this.nextZIndex();
@@ -907,12 +1092,17 @@ export class Editor implements ToolContext {
 
   /** Case-insensitive search over text elements, in reading order (top-to-bottom, left-to-right). */
   /** Case-insensitive search over text elements and table cells, in reading order. */
-  findText(query: string): Array<{ el: SketchElement; text: string; cell?: { row: number; col: number } }> {
+  findText(query: string): Array<{ el: SketchElement; text: string; cell?: { row: number; col: number }; line?: number }> {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    const hits: Array<{ el: SketchElement; text: string; cell?: { row: number; col: number } }> = [];
+    const hits: Array<{ el: SketchElement; text: string; cell?: { row: number; col: number }; line?: number }> = [];
     for (const e of this.scene.getElements()) {
       if (e.type === 'text' && e.text.toLowerCase().includes(q)) hits.push({ el: e, text: e.text });
+      if (e.type === 'code') {
+        e.code.split('\n').forEach((line, i) => {
+          if (line.toLowerCase().includes(q)) hits.push({ el: e, text: line.trim(), line: i + 1 });
+        });
+      }
       if (e.type === 'table') {
         e.cells.forEach((row, r) =>
           row.forEach((t, c) => {
@@ -930,7 +1120,7 @@ export class Editor implements ToolContext {
     if (!el || el.isDeleted) return;
     this.setTool('selection');
     this.setSelection([id]);
-    const b = elementRegistry.get(el).getBounds(el);
+    const b = getElementBounds(el);
     const pad = Math.max(120, Math.max(b.width, b.height));
     const zoom = this.getViewport().zoom;
     const target = { x: b.x - pad, y: b.y - pad, width: b.width + pad * 2, height: b.height + pad * 2 };
@@ -1015,7 +1205,8 @@ export class Editor implements ToolContext {
     return elements.flatMap((e) => (e.type === 'image' ? [e.fileId] : []));
   }
 
-  loadScene(data: SceneData, opts: { keepViewport?: boolean } = {}): void {
+  /** Replaces the board. `workspaceFile` links it to a saved workspace drawing (anything else unlinks it). */
+  loadScene(data: SceneData, opts: { keepViewport?: boolean; workspaceFile?: WorkspaceFileRef | null } = {}): void {
     // Imported elements get fresh versions so they win over any stale peer copies.
     if (data.files) fileStore.add(Object.values(data.files));
     const elements = data.elements.map((e) => ({ ...e, versionNonce: randomInteger() }));
@@ -1028,6 +1219,7 @@ export class Editor implements ToolContext {
       gridEnabled: a.gridEnabled ?? s.gridEnabled,
       viewColorMode: a.viewColorMode ?? s.viewColorMode,
       viewport: !opts.keepViewport && a.viewport ? a.viewport : s.viewport,
+      workspaceFile: opts.workspaceFile ?? null,
     }));
     this.history.clear();
     shapeCache.prune(new Set(elements.map((e) => e.id)));
@@ -1079,7 +1271,13 @@ export class Editor implements ToolContext {
    */
   refreshTextMetrics(): void {
     const fixed: SketchElement[] = [];
+    resetCodeMetrics(); // the monospace font may just have arrived
     for (const el of this.scene.getElements()) {
+      if (el.type === 'code') {
+        const l = codeLayout(el);
+        if (Math.abs(l.width - el.width) > 0.5 || Math.abs(l.height - el.height) > 0.5) fixed.push({ ...el, width: l.width, height: l.height });
+        continue;
+      }
       if (el.type === 'table') {
         const next = relayout(el);
         if (Math.abs(next.height - el.height) > 0.5) fixed.push({ ...el, ...next });
@@ -1088,7 +1286,9 @@ export class Editor implements ToolContext {
       if (el.type !== 'text' || el.id === this.getState().editingTextId) continue;
       const m = measureText(el.text || ' ', el.fontSize, el.fontFamily, el);
       if (Math.abs(m.width - el.width) > 0.5 || Math.abs(m.height - el.height) > 0.5) {
-        fixed.push({ ...el, width: m.width, height: m.height });
+        // centred / right-aligned text keeps its anchor when a web font arrives
+        const dx = el.textAlign === 'center' ? (el.width - m.width) / 2 : el.textAlign === 'right' ? el.width - m.width : 0;
+        fixed.push({ ...el, x: el.x + dx, width: m.width, height: m.height });
       }
     }
     if (fixed.length) this.scene.upsert(fixed, 'load');
@@ -1145,6 +1345,16 @@ export class Editor implements ToolContext {
     const files = [...data.files].filter((f) => f.type.startsWith('image/'));
     if (files.length) return this.insertImages(files);
     const text = data.getData('text/plain');
+    // shapes copied in Excalidraw (Ctrl+C there, Ctrl+V here)
+    if (text.includes('"excalidraw/clipboard"')) {
+      try {
+        const { scene } = fromExcalidraw(JSON.parse(text));
+        if (scene.files) fileStore.add(Object.values(scene.files));
+        return this.pasteElements(parseScene(scene).elements);
+      } catch {
+        /* fall through to plain text */
+      }
+    }
     if (text.includes(CLIPBOARD_MARKER)) {
       try {
         const parsed = JSON.parse(text) as { elements: SketchElement[]; files?: Record<string, BinaryFile> };

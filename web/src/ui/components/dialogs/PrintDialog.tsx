@@ -89,7 +89,7 @@ export function PrintDialog({ onClose }: { onClose: () => void }) {
               ]}
             />
           </Field>
-          <Field label="Colours" hint={colorMode === 'blackwhite' ? 'Strokes and text in black, fills become black hatching — ideal for laser printers.' : undefined}>
+          <Field label="Colours" hint={colorMode === 'blackwhite' ? 'Strokes and text in black. Very light fills print as plain paper, pastel fills as light hatching, strong colours as hatching — so text stays readable. Ideal for laser printers.' : undefined}>
             <Segmented
               value={colorMode}
               onChange={setColorMode}

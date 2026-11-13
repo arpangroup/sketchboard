@@ -63,11 +63,11 @@ export function buildPrintSvg(o: PrintOptions): PrintDocument {
     });
   } else {
     const c = contentBounds(o.elements, 10) ?? { x: 0, y: 0, width: 1, height: 1 };
-    const m = page.marginPx;
+    const m = page.margins;
     const deco = pageDecorations(setup, 1, { rects: [{ x: 0, y: 0, width: page.widthPx, height: page.heightPx }] });
     pages.push(
       wrap(
-        `<svg x="${n(m)}" y="${n(m)}" width="${n(page.widthPx - 2 * m)}" height="${n(page.heightPx - 2 * m)}"` +
+        `<svg x="${n(m.left)}" y="${n(m.top)}" width="${n(page.widthPx - m.left - m.right)}" height="${n(page.heightPx - m.top - m.bottom)}"` +
           ` viewBox="${n(c.x)} ${n(c.y)} ${n(c.width)} ${n(c.height)}" preserveAspectRatio="xMidYMid meet">` +
           body +
           '</svg>' +

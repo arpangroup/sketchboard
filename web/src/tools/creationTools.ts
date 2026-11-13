@@ -1,6 +1,7 @@
 import { distance, normalizeBounds, simplifyPath, snapAngle } from '../core/geometry';
-import type { FreeDrawElement, LinearElement, Point, ShapeElement, SketchElement, TableElement } from '../core/types';
-import { createFreeDraw, createLinear, createShape, createTable, createText, updateElement } from '../elements/factory';
+import type { FigureElement, FreeDrawElement, LinearElement, Point, ShapeElement, SketchElement, TableElement } from '../core/types';
+import { createFigure, createFreeDraw, createLinear, createShape, createTable, createText, updateElement } from '../elements/factory';
+import { getFigure } from '../elements/figures/figures';
 import { relayout } from '../elements/table/tableLayout';
 import { recognizeShape } from '../elements/shapeRecognition';
 import { pointsToElementGeometry } from '../elements/handlers/pointShapes';
@@ -48,7 +49,7 @@ abstract class DragCreateTool<T extends SketchElement> implements Tool {
     this.ctx.scene.upsert([updateElement(current, this.update(current, this.origin, p))]);
   }
 
-  onPointerUp(): void {
+  onPointerUp(_p?: PointerInfo): void {
     const id = this.elementId;
     this.origin = null;
     this.elementId = null;
@@ -87,6 +88,44 @@ export class ShapeTool extends DragCreateTool<ShapeElement> {
     }
     if (p.altKey) return normalizeBounds({ x: o.x - w, y: o.y - h, width: w * 2, height: h * 2 });
     return normalizeBounds({ x: o.x, y: o.y, width: w, height: h });
+  }
+}
+
+/** Gallery shapes: drag to size (Shift keeps proportions, Alt draws from the centre) or click to drop one. */
+export class FigureTool extends DragCreateTool<FigureElement> {
+  readonly type = 'figure' as const;
+
+  protected create(at: Point): FigureElement {
+    const s = this.ctx.getState();
+    return createFigure(s.currentFigure, s.currentStyle, at, this.ctx.nextZIndex());
+  }
+
+  protected update(_el: FigureElement, o: Point, p: PointerInfo): Partial<FigureElement> {
+    let w = p.world.x - o.x;
+    let h = p.world.y - o.y;
+    if (p.shiftKey) {
+      const ratio = getFigure(this.ctx.getState().currentFigure)?.ratio ?? 1;
+      const s = Math.max(Math.abs(w), Math.abs(h) * ratio);
+      w = Math.sign(w || 1) * s;
+      h = Math.sign(h || 1) * (s / ratio);
+    }
+    const b = p.altKey ? normalizeBounds({ x: o.x - w, y: o.y - h, width: w * 2, height: h * 2 }) : normalizeBounds({ x: o.x, y: o.y, width: w, height: h });
+    return b;
+  }
+
+  onPointerUp(p?: PointerInfo): void {
+    if (!this.elementId && this.origin && p) {
+      // a click: drop the shape at its natural proportions, centred on the pointer
+      const ratio = getFigure(this.ctx.getState().currentFigure)?.ratio ?? 1;
+      const h = 110 / Math.sqrt(ratio);
+      const w = h * ratio;
+      const el = { ...this.create(this.origin), x: p.world.x - w / 2, y: p.world.y - h / 2, width: w, height: h };
+      this.ctx.scene.upsert([el]);
+      this.origin = null;
+      this.ctx.finishCreation(el);
+      return;
+    }
+    super.onPointerUp();
   }
 }
 
@@ -243,7 +282,17 @@ export class LaserTool implements Tool {
     if (isDown) this.ctx.emitLaser(p.world, false);
   }
 
-  onPointerUp(): void {}
+  onPointerUp(): void {
+    this.ctx.releaseLaser();
+  }
+
+  onCancel(): void {
+    this.ctx.releaseLaser();
+  }
+
+  onDeactivate(): void {
+    this.ctx.releaseLaser();
+  }
 }
 
 export class TextTool implements Tool {

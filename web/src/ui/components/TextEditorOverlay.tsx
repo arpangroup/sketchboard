@@ -51,8 +51,12 @@ export function TextEditorOverlay() {
         color: el.strokeColor,
         textAlign: el.textAlign,
         opacity: el.opacity / 100,
-        transformOrigin: 'top left',
         marginLeft: el.textAlign === 'center' ? -(el.fontSize * z) / 2 : el.textAlign === 'right' ? -el.fontSize * z : 0,
+        // rotated text is edited in place, turned around the element's centre
+        transform: el.angle ? `rotate(${el.angle}rad)` : undefined,
+        transformOrigin: el.angle
+          ? `${(el.width / 2) * z - (el.textAlign === 'center' ? -(el.fontSize * z) / 2 : el.textAlign === 'right' ? -el.fontSize * z : 0)}px ${(el.height / 2) * z}px`
+          : 'top left',
       }}
       onChange={(e) => editor.updateEditingText(e.target.value)}
       onBlur={() => editor.finishTextEditing()}

@@ -99,9 +99,15 @@ export class CollabSession {
         this.flush();
       }),
       this.editor.events.on('pointerMove', (p) => this.sendPointer(p)),
-      this.editor.events.on('laser', ({ point, start }) => {
+      this.editor.events.on('laser', ({ point, start, size, mode }) => {
         this.laserQueue.push({ x: point.x, y: point.y, start });
+        this.laserStyle = { size, mode };
         this.flushLaser();
+      }),
+      this.editor.events.on('laserEnd', ({ size, mode }) => {
+        // send what's queued, then a reliable "released" marker (not volatile, so it isn't dropped)
+        const points = this.laserQueue.splice(0);
+        void this.broadcast({ kind: 'laser', points, size, mode, end: true }, false);
       }),
     );
     this.pruneTimer = setInterval(() => this.pruneCollaborators(), 10_000);
@@ -151,10 +157,11 @@ export class CollabSession {
   }
 
   private laserQueue: Array<{ x: number; y: number; start: boolean }> = [];
+  private laserStyle: { size: number; mode: 'fade' | 'hold' } = { size: 2, mode: 'fade' };
   private flushLaser = throttle(() => {
     if (!this.laserQueue.length) return;
     const points = this.laserQueue.splice(0);
-    void this.broadcast({ kind: 'laser', points }, true);
+    void this.broadcast({ kind: 'laser', points, ...this.laserStyle }, true);
   }, 30);
 
   private sendPointer = throttle((pointer: Point) => {
@@ -224,7 +231,10 @@ export class CollabSession {
         return;
       case 'laser': {
         const color = this.editor.getState().collab.collaborators[from]?.color ?? colorFor(from);
-        for (const p of payload.points.slice(0, 500)) this.editor.laser.add(from, color, p, p.start);
+        const size = Math.min(4, Math.max(1, Math.round(Number(payload.size) || 2)));
+        const mode = payload.mode === 'hold' ? 'hold' : 'fade';
+        for (const p of payload.points.slice(0, 500)) this.editor.laser.add(from, color, p, p.start, { size, mode });
+        if (payload.end) this.editor.laser.release(from);
         this.editor.requestRender();
         return;
       }

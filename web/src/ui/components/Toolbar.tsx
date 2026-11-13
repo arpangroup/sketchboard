@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ToolType } from '../../core/types';
 import { useAppState, useEditor } from '../EditorContext';
 import { type IconName, Icons } from '../icons/Icons';
+import { ShapeGallery } from './ShapeGallery';
 
 const TOOLS: Array<{ type: ToolType; label: string; key: string }> = [
   { type: 'hand', label: 'Hand — pan the canvas', key: 'H' },
@@ -14,14 +15,15 @@ const TOOLS: Array<{ type: ToolType; label: string; key: string }> = [
   { type: 'freedraw', label: 'Pen (pressure-sensitive, works with Apple Pencil & styluses)', key: '7' },
   { type: 'text', label: 'Text', key: '8' },
   { type: 'table', label: 'Table', key: 'G' },
-  { type: 'eraser', label: 'Stroke eraser', key: '0' },
+  { type: 'eraser', label: 'Eraser', key: '0' },
 ];
 
 /** Tools that live in the "More tools" popover (the ⋯ button shows the active one). */
 const MORE_TOOLS: Array<{ type: ToolType; label: string; hint: string; key: string; icon: IconName }> = [
   { type: 'freedraw', label: 'Pen', hint: 'Pressure-sensitive ink', key: 'P', icon: 'freedraw' },
   { type: 'highlighter', label: 'Highlighter', hint: 'Translucent marker', key: 'M', icon: 'highlighter' },
-  { type: 'eraser', label: 'Stroke eraser', hint: 'Removes whole strokes', key: 'E', icon: 'eraser' },
+  { type: 'eraser', label: 'Stroke eraser', hint: 'Removes whole strokes and shapes', key: 'E', icon: 'eraser' },
+  { type: 'precisionEraser', label: 'Precision eraser', hint: 'Rubs out just part of a stroke', key: '⇧E', icon: 'precisionEraser' },
   { type: 'laser', label: 'Laser pointer', hint: 'Point things out, fades away', key: 'K', icon: 'laser' },
 ];
 
@@ -29,6 +31,7 @@ export function Toolbar() {
   const { editor } = useEditor();
   const active = useAppState((s) => s.activeTool);
   const locked = useAppState((s) => s.toolLocked);
+  const eraserMode = useAppState((s) => s.eraser.mode);
 
   return (
     <div className="sb-island sb-toolbar" role="toolbar" aria-label="Drawing tools">
@@ -42,19 +45,26 @@ export function Toolbar() {
       </button>
       <span className="sb-divider" />
       {TOOLS.map((t) => {
-        const Icon = Icons[t.type as IconName];
+        // the eraser button covers both erasers and shows the one in use
+        const isEraser = t.type === 'eraser';
+        const precise = isEraser && (active === 'precisionEraser' || (active !== 'eraser' && eraserMode === 'precision'));
+        const Icon = Icons[(precise ? 'precisionEraser' : t.type) as IconName];
+        const on = isEraser ? active === 'eraser' || active === 'precisionEraser' : active === t.type;
+        const label = isEraser ? (precise ? 'Precision eraser' : 'Stroke eraser') : t.label;
         return (
-          <button
-            key={t.type}
-            className={`sb-tool ${active === t.type ? 'is-active' : ''}`}
-            title={`${t.label} — ${t.key}`}
-            aria-label={t.label.split(' (')[0]}
-            aria-pressed={active === t.type}
-            onClick={() => editor.setTool(t.type)}
-          >
-            <Icon />
-            <span className="sb-tool__key">{t.key}</span>
-          </button>
+          <span key={t.type} className="sb-toolbar__slot">
+            <button
+              className={`sb-tool sb-tool--${t.type} ${on ? 'is-active' : ''}`}
+              title={`${label} — ${t.key}${isEraser ? ' (switch eraser type in the panel or with Shift+E)' : ''}`}
+              aria-label={label.split(' (')[0]}
+              aria-pressed={on}
+              onClick={() => (isEraser ? editor.setEraser() : editor.setTool(t.type))}
+            >
+              <Icon />
+              <span className="sb-tool__key">{t.key}</span>
+            </button>
+            {t.type === 'ellipse' && <ShapeGallery />}
+          </span>
         );
       })}
       <span className="sb-divider" />
@@ -108,7 +118,7 @@ function MoreTools() {
                 role="menuitemradio"
                 aria-checked={active === t.type}
                 className={`sb-more__item ${active === t.type ? 'is-active' : ''}`}
-                onClick={pick(() => editor.setTool(t.type))}
+                onClick={pick(() => (t.type === 'precisionEraser' || t.type === 'eraser' ? editor.setEraser(t.type === 'eraser' ? 'stroke' : 'precision') : editor.setTool(t.type)))}
               >
                 <Icon />
                 <span>
@@ -128,6 +138,14 @@ function MoreTools() {
               <small>Or paste / drop one onto the board</small>
             </span>
             <kbd>9</kbd>
+          </button>
+          <button role="menuitem" className="sb-more__item" onClick={pick(() => actions.execute('insertCode'))}>
+            <Icons.code />
+            <span>
+              Code block
+              <small>Syntax highlighting, line numbers, marked lines</small>
+            </span>
+            <kbd>C</kbd>
           </button>
           <hr />
           <p className="sb-more__heading">Options</p>

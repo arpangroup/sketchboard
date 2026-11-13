@@ -1,6 +1,7 @@
 import type { DialogId, ToolType } from '../core/types';
 import type { Editor } from '../editor/Editor';
-import { openSceneFile, saveSceneToFile } from '../persistence/fileService';
+import { openSceneFile, saveExcalidrawFile, saveSceneToFile } from '../persistence/fileService';
+import { describeImport } from '../persistence/importScene';
 import { STORAGE_KEYS } from '../core/constants';
 
 /**
@@ -90,7 +91,50 @@ export const ACTIONS: Action[] = [
   },
   toolAction('text', 'Text', ['t', '8']),
   toolAction('table', 'Table', ['g']),
-  toolAction('eraser', 'Stroke eraser', ['e', '0']),
+  {
+    id: 'tool:eraser',
+    label: 'Eraser (last used: stroke or precision)',
+    shortcut: 'E or 0',
+    keyTest: (e) => plain(e) && !e.shiftKey && (key(e, 'e') || e.key === '0'),
+    perform: (ed) => ed.setEraser(),
+  },
+  {
+    id: 'tool:precisionEraser',
+    label: 'Precision eraser',
+    shortcut: 'Shift+E',
+    keyTest: (e) => plain(e) && e.shiftKey && key(e, 'e'),
+    perform: (ed) => ed.setEraser('precision'),
+  },
+  {
+    id: 'rotateRight',
+    label: 'Rotate 90° clockwise',
+    shortcut: 'Shift+R',
+    keyTest: (e) => e.shiftKey && !e.altKey && !mod(e) && e.code === 'KeyR',
+    enabled: hasSelection,
+    perform: (ed) => ed.rotateSelection(Math.PI / 2),
+  },
+  {
+    id: 'rotateLeft',
+    label: 'Rotate 90° counter-clockwise',
+    shortcut: 'Shift+Alt+R',
+    keyTest: (e) => e.shiftKey && e.altKey && !mod(e) && e.code === 'KeyR',
+    enabled: hasSelection,
+    perform: (ed) => ed.rotateSelection(-Math.PI / 2),
+  },
+  {
+    id: 'insertCode',
+    label: 'Insert code block',
+    shortcut: 'C',
+    keyTest: (e) => plain(e) && !e.shiftKey && key(e, 'c'),
+    perform: (ed) => ed.insertCode(),
+  },
+  {
+    id: 'tool:figure',
+    label: 'Shapes gallery (last used shape)',
+    shortcut: 'S',
+    keyTest: (e) => plain(e) && !e.shiftKey && key(e, 's'),
+    perform: (ed) => ed.setTool('figure'),
+  },
   toolAction('hand', 'Hand (pan)', ['h']),
   {
     id: 'toggleToolLock',
@@ -251,17 +295,25 @@ export const ACTIONS: Action[] = [
     perform: (ed) => saveSceneToFile(ed.getSceneData(false, true)),
   },
   {
+    id: 'saveExcalidraw',
+    label: 'Save as Excalidraw file',
+    perform: (ed) => {
+      saveExcalidrawFile(ed.getSceneData(false, true));
+      ed.toast('Saved drawing.excalidraw — open it at excalidraw.com');
+    },
+  },
+  {
     id: 'openFile',
     label: 'Open file',
     shortcut: 'Ctrl+O',
     keyTest: (e) => mod(e) && key(e, 'o'),
     perform: async (ed) => {
       try {
-        const data = await openSceneFile();
-        if (data) {
-          ed.loadScene(data);
+        const opened = await openSceneFile();
+        if (opened) {
+          ed.loadScene(opened.scene);
           ed.zoomToFit();
-          ed.toast('Drawing opened');
+          ed.toast(describeImport(opened.name, opened));
         }
       } catch (err) {
         ed.toast(`Could not open file: ${(err as Error).message}`);

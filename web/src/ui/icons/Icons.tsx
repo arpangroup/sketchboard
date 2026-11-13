@@ -312,6 +312,66 @@ export const Icons = {
       <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
     </Svg>
   ),
+  cloud: () => (
+    <Svg>
+      <path d="M7 18.5h10.5a4 4 0 00.6-7.95A6 6 0 006.3 9.2 4.7 4.7 0 007 18.5z" />
+      <path d="M12 16v-5m-2.3 2.2L12 11l2.3 2.2" />
+    </Svg>
+  ),
+  link: () => (
+    <Svg>
+      <path d="M10 14a4.2 4.2 0 006 .2l2.8-2.8a4.2 4.2 0 00-6-6L11.5 6.6" />
+      <path d="M14 10a4.2 4.2 0 00-6-.2l-2.8 2.8a4.2 4.2 0 006 6l1.2-1.2" />
+    </Svg>
+  ),
+  pencil: () => (
+    <Svg>
+      <path d="M4.5 19.5l1-4.2L15.8 5a1.9 1.9 0 012.7 0l.5.5a1.9 1.9 0 010 2.7L8.7 18.5z" />
+      <path d="M13.8 7l3.2 3.2" />
+    </Svg>
+  ),
+  external: () => (
+    <Svg>
+      <path d="M14 4.5h5.5V10M19.2 4.8L11 13" />
+      <path d="M17 13.5v5a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 014 18.5v-10A1.5 1.5 0 015.5 7h5" />
+    </Svg>
+  ),
+  refresh: () => (
+    <Svg>
+      <path d="M19.5 12a7.5 7.5 0 11-2.2-5.3M19.5 4.5v4.2h-4.2" />
+    </Svg>
+  ),
+  rotateCw: () => (
+    <Svg>
+      <path d="M19.5 12a7.5 7.5 0 11-2.2-5.3" />
+      <path d="M19.8 4.5v4.3h-4.3" />
+    </Svg>
+  ),
+  rotateCcw: () => (
+    <Svg>
+      <path d="M4.5 12a7.5 7.5 0 102.2-5.3" />
+      <path d="M4.2 4.5v4.3h4.3" />
+    </Svg>
+  ),
+  code: () => (
+    <Svg>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+      <path d="M9.5 10l-2.5 2.5 2.5 2.5M14.5 10l2.5 2.5-2.5 2.5" />
+    </Svg>
+  ),
+  precisionEraser: () => (
+    <Svg>
+      <path d="M14.5 4.5l5 5-7.3 7.3a2 2 0 01-2.8 0l-2.2-2.2a2 2 0 010-2.8z" />
+      <circle cx="6" cy="18.5" r="2.2" />
+      <path d="M11 20h9" strokeDasharray="1.5 2.5" />
+    </Svg>
+  ),
+  libraryAdd: () => (
+    <Svg>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M12 8.5v7M8.5 12h7" />
+    </Svg>
+  ),
 };
 
 export type IconName = keyof typeof Icons;

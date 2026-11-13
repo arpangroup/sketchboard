@@ -33,6 +33,9 @@ export interface ToolContext {
   finishCreation(el: SketchElement): void;
   startTextEditing(id: string): void;
   startCellEditing(id: string, row: number, col: number): void;
+  startCodeEditing(id: string): void;
+  /** Click on a code block's line number: toggles that line's mark. */
+  toggleCodeLine(id: string, line: number): void;
   /** Remember the last table cell touched (row/column commands act on it). */
   noteTableCell(id: string, row: number, col: number): void;
   nextZIndex(): number;
@@ -41,6 +44,8 @@ export interface ToolContext {
   toast(message: string): void;
   /** Adds a point to the local laser-pointer trail (and shares it with collaborators). */
   emitLaser(world: Point, startStroke: boolean): void;
+  /** The laser stroke ended (pen / mouse released). */
+  releaseLaser(): void;
 }
 
 /**

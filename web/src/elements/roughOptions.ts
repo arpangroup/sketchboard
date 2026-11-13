@@ -32,6 +32,11 @@ export function toRoughOptions(
   if (opts.fillable && !isTransparent(el.backgroundColor)) {
     o.fill = el.backgroundColor;
     o.fillStyle = el.fillStyle;
+    if (el.fillDensity === 'light') {
+      // pale fills in black & white: a light tint of hatching that text stays readable on
+      o.hachureGap = Math.max(sw * 4, 8) * 2.4;
+      o.fillWeight = 0.6;
+    }
   }
   return o;
 }

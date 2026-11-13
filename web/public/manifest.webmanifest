@@ -1,30 +1,30 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "SketchBoard — hand-drawn whiteboard",
   "short_name": "SketchBoard",
   "description": "Draw diagrams, flowcharts, wireframes and sketches with a hand-drawn look. Print on A4/A3 in black & white, export PNG/SVG, collaborate live.",
-  "start_url": "/?source=pwa",
-  "scope": "/",
+  "start_url": "./?source=pwa",
+  "scope": "./",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#ffffff",
   "theme_color": "#5b5bd6",
   "categories": ["productivity", "graphics", "education"],
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
   ],
   "screenshots": [
-    { "src": "/screenshots/wide.png", "sizes": "1280x800", "type": "image/png", "form_factor": "wide", "label": "Diagram with the sidebar open" },
-    { "src": "/screenshots/narrow.png", "sizes": "1170x1992", "type": "image/png", "form_factor": "narrow", "label": "Sketching on a phone" }
+    { "src": "screenshots/wide.png", "sizes": "1280x800", "type": "image/png", "form_factor": "wide", "label": "Diagram with the sidebar open" },
+    { "src": "screenshots/narrow.png", "sizes": "1170x1992", "type": "image/png", "form_factor": "narrow", "label": "Sketching on a phone" }
   ],
   "shortcuts": [
-    { "name": "Start live session", "url": "/?action=collab", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+    { "name": "Start live session", "url": "./?action=collab", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
   ],
   "file_handlers": [
-    { "action": "/", "accept": { "application/vnd.sketchboard+json": [".sketchboard"] } }
+    { "action": "./", "accept": { "application/vnd.sketchboard+json": [".sketchboard"], "application/vnd.excalidraw+json": [".excalidraw"] } }
   ],
   "launch_handler": { "client_mode": "focus-existing" }
 }

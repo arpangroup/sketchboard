@@ -53,6 +53,8 @@ export const createInitialAppState = (): AppState => ({
   viewColorMode: 'color',
   editingTextId: null,
   editingCell: null,
+  editingCodeId: null,
+  codeDefaults: { language: 'javascript', theme: 'dark', fontSize: 16, lineNumbers: true, showLanguage: true, markColor: 'yellow' },
   tableDefaults: {
     rows: 3,
     cols: 3,
@@ -72,6 +74,10 @@ export const createInitialAppState = (): AppState => ({
   penMode: false,
   shapeRecognition: false,
   chat: { messages: [], unread: 0 },
+  workspaceFile: null,
+  currentFigure: 'star-5',
+  laser: { mode: 'fade', size: 2 },
+  eraser: { mode: 'stroke', size: 12 },
 });
 
 export const STORAGE_KEYS = {
@@ -81,6 +87,9 @@ export const STORAGE_KEYS = {
   sidebarPinned: 'sketchboard:sidebar-pinned',
   penMode: 'sketchboard:pen-mode',
   shapeRecognition: 'sketchboard:shape-recognition',
+  workspaceFile: 'sketchboard:workspace-file',
+  library: 'sketchboard:library',
+  laser: 'sketchboard:laser',
 } as const;
 
 export const FILE_EXTENSION = '.sketchboard';

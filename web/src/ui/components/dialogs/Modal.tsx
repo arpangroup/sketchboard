@@ -9,7 +9,8 @@ export function Modal(p: { title: string; onClose: () => void; children: ReactNo
     const prev = document.activeElement as HTMLElement | null;
     ref.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      // a nested overlay (e.g. a preview) handles its own Escape first
+      if (e.key === 'Escape' && !ref.current?.querySelector('[data-overlay]')) {
         e.stopPropagation();
         onCloseRef.current();
       }

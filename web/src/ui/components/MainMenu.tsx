@@ -12,8 +12,14 @@ interface Item {
 }
 
 const ITEMS: Array<Item | 'sep'> = [
-  { action: 'openFile', icon: 'folder', label: 'Open…' },
+  { action: 'openFile', icon: 'folder', label: 'Open… (.sketchboard, .excalidraw)' },
   { action: 'saveFile', icon: 'download', label: 'Save to file…' },
+  { action: 'saveExcalidraw', icon: 'download', label: 'Save as Excalidraw…' },
+  'sep',
+  { action: 'dialog:workspace', icon: 'cloud', label: 'Workspace (saved drawings)…' },
+  { action: 'saveToWorkspace', icon: 'cloud', label: 'Save to workspace' },
+  { action: 'dialog:link', icon: 'link', label: 'Export to link…' },
+  'sep',
   { action: 'dialog:export', icon: 'image', label: 'Export image…' },
   { action: 'dialog:print', icon: 'print', label: 'Print…' },
   { action: 'dialog:page', icon: 'page', label: 'Page setup…' },

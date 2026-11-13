@@ -25,7 +25,9 @@ export type ElementType =
   | 'freedraw'
   | 'text'
   | 'image'
-  | 'table';
+  | 'table'
+  | 'figure'
+  | 'code';
 
 export type FillStyle = 'hachure' | 'cross-hatch' | 'solid' | 'zigzag' | 'dots';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
@@ -34,7 +36,8 @@ export type FontFamily = string;
 export type FontWeight = 'normal' | 'bold';
 export type FontStyle = 'normal' | 'italic';
 export type TextAlign = 'left' | 'center' | 'right';
-export type Arrowhead = 'arrow' | 'triangle' | 'bar' | 'dot' | 'none';
+/** `*_outline` heads are hollow (UML inheritance / aggregation). */
+export type Arrowhead = 'arrow' | 'triangle' | 'triangle_outline' | 'diamond' | 'diamond_outline' | 'bar' | 'dot' | 'none';
 
 /** Visual properties shared by every element. */
 export interface ElementStyle {
@@ -47,6 +50,8 @@ export interface ElementStyle {
   roughness: number;
   /** 0..100 */
   opacity: number;
+  /** Render-only (set by print colour modes, never saved): 'light' = sparse, thin hatching. */
+  fillDensity?: 'light';
 }
 
 export interface BaseElement extends ElementStyle {
@@ -64,6 +69,11 @@ export interface BaseElement extends ElementStyle {
   versionNonce: number;
   /** Fractional z-index: allows reordering without rewriting other elements. */
   zIndex: number;
+  /**
+   * Clockwise rotation in radians around the centre of the x/y/width/height box (0 / absent = upright).
+   * Lines, arrows and ink never store one: rotating them rotates their points.
+   */
+  angle?: number;
   /** Tombstone flag - deleted elements are kept so deletions sync to peers. */
   isDeleted: boolean;
   locked: boolean;
@@ -83,6 +93,8 @@ export interface LinearElement extends BaseElement {
   endArrowhead: Arrowhead;
   /** Closed straight-edged polygon (e.g. a recognised triangle) instead of an open path. */
   polygon?: boolean;
+  /** Straight segments between points (e.g. elbow connectors) instead of a smooth curve. */
+  sharp?: boolean;
 }
 
 export type FreeDrawKind = 'pen' | 'highlighter';
@@ -155,7 +167,51 @@ export interface TextElement extends BaseElement {
   underline: boolean;
 }
 
-export type SketchElement = ShapeElement | LinearElement | FreeDrawElement | TextElement | ImageElement | TableElement;
+/**
+ * Gallery shape (callout, star, block arrow, flowchart symbol…) drawn from the figure catalogue
+ * (elements/figures). `x, y, width, height` is the body box; callouts also have a tail.
+ */
+export interface FigureElement extends BaseElement {
+  type: 'figure';
+  /** Catalogue id, e.g. "star-5", "callout-rounded", "fc-document". */
+  figure: string;
+  /** Callout tail tip relative to the body box (0..1 = inside; beyond = outside). */
+  tail?: Point;
+}
+
+export type CodeMark = 'yellow' | 'green' | 'red' | 'blue';
+export type CodeTheme = 'light' | 'dark';
+
+/** Code block: syntax-highlighted, monospaced, with optional line numbers and marked (highlighted) lines. */
+export interface CodeElement extends BaseElement {
+  type: 'code';
+  code: string;
+  /** Highlighter language id (see elements/code/highlight.ts). */
+  language: string;
+  theme: CodeTheme;
+  fontSize: number;
+  lineNumbers: boolean;
+  /** Language name in the header (absent = shown). */
+  showLanguage?: boolean;
+  /** Optional caption in the header (e.g. a file name). */
+  title: string;
+  /** Marked lines: 1-based line number → colour. */
+  marks: Record<string, CodeMark>;
+  /** Render-only (print colour modes), never saved. */
+  printMode?: 'grayscale' | 'blackwhite';
+}
+
+/** Settings new code blocks start with (the code tool's "current style"). */
+export interface CodeDefaults {
+  language: string;
+  theme: CodeTheme;
+  fontSize: number;
+  lineNumbers: boolean;
+  showLanguage: boolean;
+  markColor: CodeMark;
+}
+
+export type SketchElement = ShapeElement | LinearElement | FreeDrawElement | TextElement | ImageElement | TableElement | FigureElement | CodeElement;
 
 export type ElementOfType<T extends ElementType> = Extract<SketchElement, { type: T }>;
 
@@ -186,13 +242,22 @@ export type ToolType =
   | 'eraser'
   | 'highlighter'
   | 'laser'
-  | 'table';
+  | 'table'
+  | 'figure'
+  | 'precisionEraser';
 
 export interface Viewport {
   /** World offset: screen = (world + scroll) * zoom */
   scrollX: number;
   scrollY: number;
   zoom: number;
+}
+
+export interface PageMargins {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
 }
 
 export type PageSizeId = 'infinite' | 'A5' | 'A4' | 'A3' | 'A2' | 'Letter' | 'Legal' | 'Tabloid';
@@ -208,8 +273,10 @@ export type HeaderFooterText = Record<HeaderFooterSlot, string>;
 export interface PageSetup {
   size: PageSizeId;
   orientation: Orientation;
-  /** Printable margin in millimetres (headers/footers sit inside it). */
+  /** Uniform margin in millimetres - used when `margins` isn't set (older files, presets). */
   marginMm: number;
+  /** Per-side margins in millimetres (headers/footers sit inside the top/bottom ones). Overrides `marginMm`. */
+  margins?: PageMargins;
   /** Minimum number of pages; more are added automatically when drawing below the last page. */
   pageCount?: number;
   /** Document title, available to headers/footers as {title}. */
@@ -252,6 +319,9 @@ export interface AppState {
   /** Colour mode applied on screen (preview) - print/export choose their own. */
   viewColorMode: ColorMode;
   editingTextId: string | null;
+  /** Code block being edited in place. */
+  editingCodeId: string | null;
+  codeDefaults: CodeDefaults;
   /** Table cell being edited in place. */
   editingCell: { id: string; row: number; col: number } | null;
   tableDefaults: TableDefaults;
@@ -273,9 +343,34 @@ export interface AppState {
   /** Convert pen strokes that look like shapes into clean rectangles/ellipses/diamonds/lines. */
   shapeRecognition: boolean;
   chat: { messages: ChatMessage[]; unread: number };
+  /** Laser pointer: trail behaviour and size (1-4). */
+  laser: { mode: 'fade' | 'hold'; size: number };
+  /** Shape the figure tool draws (catalogue id). */
+  currentFigure: string;
+  /** Which eraser the toolbar's eraser button picks; precision radius in screen px. */
+  eraser: { mode: 'stroke' | 'precision'; size: number };
+  /** The workspace drawing this board was opened from / last saved to (null = not saved yet). */
+  workspaceFile: WorkspaceFileRef | null;
 }
 
-export type DialogId = 'export' | 'print' | 'page' | 'collab' | 'help' | 'install';
+export interface WorkspaceFileRef {
+  id: string;
+  name: string;
+  /** Server revision we last saw - sent back on save to detect concurrent edits. */
+  revision: number;
+}
+
+/** A reusable group of elements in a library (personal or built-in). Elements start at (0, 0). */
+export interface LibraryItem {
+  id: string;
+  name: string;
+  created: number;
+  elements: SketchElement[];
+  /** Built-in section, e.g. "Database"; personal items have none. */
+  category?: string;
+}
+
+export type DialogId = 'export' | 'print' | 'page' | 'collab' | 'help' | 'install' | 'workspace' | 'link';
 
 /** Serialisable document format (.sketchboard files & local storage). */
 export interface SceneData {

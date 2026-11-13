@@ -1,6 +1,9 @@
 import { generateId, randomInteger } from '../core/utils';
 import type {
   BaseElement,
+  CodeDefaults,
+  CodeElement,
+  FigureElement,
   CurrentStyle,
   FreeDrawElement,
   FreeDrawKind,
@@ -16,6 +19,8 @@ import type {
 import { measureText } from './textMetrics';
 import { DEFAULT_STYLE } from '../core/constants';
 import { relayout } from './table/tableLayout';
+import { getFigure } from './figures/figures';
+import { codeLayout } from './code/codeLayout';
 
 /** Factory functions: the ONLY place elements are constructed. */
 
@@ -120,6 +125,30 @@ export function createTable(
   return { ...el, ...relayout(el) };
 }
 
+/** Code block sized to its content. */
+export function createCode(style: CurrentStyle, defaults: CodeDefaults, at: Point, zIndex: number, code = ''): CodeElement {
+  const el: CodeElement = {
+    ...base('code', { ...style, roughness: Math.min(style.roughness, 1) }, at, zIndex),
+    type: 'code',
+    code,
+    language: defaults.language,
+    theme: defaults.theme,
+    fontSize: defaults.fontSize,
+    lineNumbers: defaults.lineNumbers,
+    showLanguage: defaults.showLanguage,
+    title: '',
+    marks: {},
+  };
+  const l = codeLayout(el);
+  return { ...el, width: l.width, height: l.height };
+}
+
+/** Gallery figure (callouts get their default tail). */
+export function createFigure(figure: string, style: CurrentStyle, at: Point, zIndex: number): FigureElement {
+  const tail = getFigure(figure)?.tail;
+  return { ...base('figure', style, at, zIndex), type: 'figure', figure, ...(tail ? { tail: { ...tail } } : {}) };
+}
+
 export function createText(style: CurrentStyle, at: Point, zIndex: number, text = ''): TextElement {
   const m = measureText(text || ' ', style.fontSize, style.fontFamily, style);
   return {
@@ -157,6 +186,8 @@ export function cloneElement<T extends SketchElement>(el: T, offset: Point, zInd
     ...el,
     ...('points' in el ? { points: el.points.map((p) => ({ ...p })) } : {}),
     ...('pressures' in el ? { pressures: [...el.pressures] } : {}),
+    ...('tail' in el && el.tail ? { tail: { ...el.tail } } : {}),
+    ...('marks' in el ? { marks: { ...el.marks } } : {}),
     ...('cells' in el ? { cells: el.cells.map((r) => [...r]), colWidths: [...el.colWidths], rowHeights: [...el.rowHeights] } : {}),
     id: generateId(),
     x: el.x + offset.x,

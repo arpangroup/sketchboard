@@ -46,6 +46,13 @@ export function drawElement(
   ctx.save();
   ctx.globalAlpha = (mode === 'blackwhite' ? 1 : el.opacity / 100) * alpha;
   ctx.translate(el.x, el.y);
+  const angle = el.angle ?? 0;
+  if (angle) {
+    // rotate around the centre of the element's box
+    ctx.translate(el.width / 2, el.height / 2);
+    ctx.rotate(angle);
+    ctx.translate(-el.width / 2, -el.height / 2);
+  }
 
   for (const d of shape.drawables) rc.draw(d);
 

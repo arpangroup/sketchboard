@@ -1,9 +1,14 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { ensureFontLoaded, FONT_OPTIONS, fontCss, isKnownFont, presetFor, sanitizeFontName, TEXT_PRESETS, type TextPreset } from '../../core/fonts';
 import { BACKGROUND_COLORS, HIGHLIGHT_COLORS, STROKE_COLORS } from '../../core/constants';
-import type { Arrowhead, CurrentStyle, ElementType, SketchElement, TableDefaults, TableElement } from '../../core/types';
+import type { Arrowhead, CodeElement, CurrentStyle, ElementType, SketchElement, TableDefaults, TableElement } from '../../core/types';
+import { CODE_LANGUAGES } from '../../elements/code/highlight';
+import { formatLineList, MARK_COLORS, parseLineList, codeLines } from '../../elements/code/codeLayout';
 import { useAppState, useEditor, useIsCompact, useSceneRevision } from '../EditorContext';
 import { Icons } from '../icons/Icons';
+import { FIGURE_CATEGORIES, FIGURES } from '../../elements/figures/figures';
+import { bakesRotation } from '../../elements/rotation';
+import { LASER_SIZES } from '../../renderer/LaserLayer';
 
 interface Option<T> {
   value: T;
@@ -78,9 +83,10 @@ const TOOL_TO_TYPE: Partial<Record<string, ElementType>> = {
   highlighter: 'freedraw',
   text: 'text',
   table: 'table',
+  figure: 'figure',
 };
 
-const FILLABLE = new Set<ElementType>(['rectangle', 'diamond', 'ellipse']);
+const FILLABLE = new Set<ElementType>(['rectangle', 'diamond', 'ellipse', 'figure']);
 
 /** Reads the value to display: the first selected element's, else the current style. */
 function displayed<K extends keyof CurrentStyle>(key: K, style: CurrentStyle, sel: SketchElement[]): CurrentStyle[K] {
@@ -94,7 +100,7 @@ export function PropertiesPanel() {
   const style = useAppState((s) => s.currentStyle);
   const tool = useAppState((s) => s.activeTool);
   useAppState((s) => s.selectedIds);
-  const editingId = useAppState((s) => s.editingTextId);
+  const editingId = useAppState((s) => s.editingTextId ?? s.editingCodeId);
   // On phones the panel is a bottom sheet opened on demand, so it never hides the drawing.
   const compact = useIsCompact();
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -105,6 +111,8 @@ export function PropertiesPanel() {
   const types = new Set<ElementType>(
     subjects.length ? subjects.map((e) => e.type) : TOOL_TO_TYPE[tool] ? [TOOL_TO_TYPE[tool]!] : [],
   );
+  if (!subjects.length && (tool === 'eraser' || tool === 'precisionEraser')) return <EraserPanel />;
+  if (!subjects.length && tool === 'laser') return <LaserPanel />;
   if (types.size === 0) return null;
   if (compact && !sheetOpen) {
     return (
@@ -123,11 +131,16 @@ export function PropertiesPanel() {
     (subjects.length > 0 && subjects.every((e) => e.type === 'freedraw' && e.kind === 'highlighter'));
   const onlyImages = subjects.length > 0 && subjects.every((e) => e.type === 'image');
   const onlyTables = types.size === 1 && types.has('table');
+  const onlyCode = types.size === 1 && types.has('code');
+  const codeEl = onlyCode && subjects.length === 1 && subjects[0].type === 'code' ? subjects[0] : null;
   const showFill = [...types].some((t) => FILLABLE.has(t));
   const arrowheads: Option<Arrowhead>[] = [
     { value: 'none', label: 'None', icon: mini('M4 12h16') },
     { value: 'arrow', label: 'Arrow', icon: mini('M4 12h16M14 7l6 5-6 5') },
     { value: 'triangle', label: 'Triangle', icon: <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 12h11" stroke="currentColor" strokeWidth="2" /><path d="M13 7l7 5-7 5z" fill="currentColor" /></svg> },
+    { value: 'triangle_outline', label: 'Hollow triangle (inheritance)', icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12h9" /><path d="M13 7l7 5-7 5z" /></svg> },
+    { value: 'diamond', label: 'Diamond (composition)', icon: <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 12h8" stroke="currentColor" strokeWidth="2" /><path d="M11 12l4.5-4 4.5 4-4.5 4z" fill="currentColor" /></svg> },
+    { value: 'diamond_outline', label: 'Hollow diamond (aggregation)', icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h8" /><path d="M11 12l4.5-4 4.5 4-4.5 4z" /></svg> },
     { value: 'bar', label: 'Bar', icon: mini('M4 12h16M20 6v12') },
     { value: 'dot', label: 'Dot', icon: <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 12h12" stroke="currentColor" strokeWidth="2" /><circle cx="17" cy="12" r="3.5" fill="currentColor" /></svg> },
   ];
@@ -152,7 +165,7 @@ export function PropertiesPanel() {
           />
         </Section>
       ) : (
-        !onlyImages && (
+        !onlyImages && !onlyCode && (
           <Section title={onlyTables ? 'Border' : 'Stroke'}>
             <ColorRow label="Stroke colour" colors={STROKE_COLORS} value={v('strokeColor')} onChange={(c) => set({ strokeColor: c })} />
           </Section>
@@ -180,7 +193,7 @@ export function PropertiesPanel() {
         </Section>
       )}
 
-      {has('rectangle', 'diamond', 'ellipse', 'arrow', 'line', 'freedraw', 'table') && (
+      {has('rectangle', 'diamond', 'ellipse', 'arrow', 'line', 'freedraw', 'table', 'figure') && (
         <Section title={onlyTables ? 'Border width' : 'Stroke width'}>
           <ButtonGroup
             value={v('strokeWidth')}
@@ -194,7 +207,7 @@ export function PropertiesPanel() {
         </Section>
       )}
 
-      {has('rectangle', 'diamond', 'ellipse', 'arrow', 'line', 'table') && (
+      {has('rectangle', 'diamond', 'ellipse', 'arrow', 'line', 'table', 'figure') && (
         <>
           <Section title={onlyTables ? 'Border style' : 'Stroke style'}>
             <ButtonGroup
@@ -231,6 +244,26 @@ export function PropertiesPanel() {
               { value: true, label: 'Round', icon: mini('M5 19V11a6 6 0 016-6h8') },
             ]}
           />
+        </Section>
+      )}
+
+      {types.size === 1 && has('figure') && (
+        <Section title="Shape">
+          <select
+            className="sb-input sb-shape-select"
+            value={(subjects.find((e) => e.type === 'figure') as { figure?: string } | undefined)?.figure ?? editor.getState().currentFigure}
+            onChange={(e) => editor.changeFigure(e.target.value)}
+            aria-label="Shape"
+          >
+            {FIGURE_CATEGORIES.map((c) => (
+              <optgroup key={c} label={c}>
+                {FIGURES.filter((f) => f.category === c).map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          {subjects.some((e) => e.type === 'figure' && e.tail) && <p className="sb-muted sb-props__hint">Drag the yellow handle to point the tail.</p>}
         </Section>
       )}
 
@@ -312,6 +345,8 @@ export function PropertiesPanel() {
         />
       )}
 
+      {codeEl && <CodeSection key={codeEl.id} el={codeEl} />}
+
       <Section title="Opacity">
         <input
           className="sb-range"
@@ -325,17 +360,257 @@ export function PropertiesPanel() {
         />
       </Section>
 
+      {selected.length > 0 && !selected.every((e) => e.locked) && <RotationSection selected={selected} />}
+
       {selected.length > 0 && (
         <Section title="Layers & actions">
           <div className="sb-btn-group">
             <IconBtn label="Send to back" onClick={() => actions.execute('sendToBack')}><Icons.back /></IconBtn>
             <IconBtn label="Bring to front" onClick={() => actions.execute('bringToFront')}><Icons.front /></IconBtn>
             <IconBtn label="Duplicate (Ctrl+D)" onClick={() => actions.execute('duplicate')}><Icons.copy /></IconBtn>
+            <IconBtn label="Add to library" onClick={() => actions.execute('addToLibrary')}><Icons.libraryAdd /></IconBtn>
             <IconBtn label={selected.every((e) => e.locked) ? 'Unlock' : 'Lock'} onClick={() => actions.execute('lock')}>
               {selected.every((e) => e.locked) ? <Icons.lock /> : <Icons.unlock />}
             </IconBtn>
             <IconBtn label="Delete" onClick={() => actions.execute('delete')}><Icons.trash /></IconBtn>
           </div>
+        </Section>
+      )}
+    </aside>
+  );
+}
+
+/** Code block settings: language, theme, size, title, line numbers and marked lines. */
+function CodeSection({ el }: { el: CodeElement }) {
+  const { editor } = useEditor();
+  const markColor = useAppState((s) => s.codeDefaults.markColor);
+  const [lines, setLines] = useState('');
+  const [title, setTitle] = useState<string | null>(null);
+  const total = codeLines(el.code).length;
+  const marked = Object.keys(el.marks).map(Number).filter((n) => n <= total);
+  const apply = (color: CodeElement['marks'][string] | null) => {
+    const list = parseLineList(lines, total);
+    if (!list.length) return editor.toast(`Type line numbers like “3, 5-7” (1–${total})`);
+    editor.setCodeMarks(el.id, list, color);
+    setLines('');
+  };
+  const commitTitle = () => {
+    if (title !== null && title !== el.title) editor.updateCode({ title });
+    setTitle(null);
+  };
+  return (
+    <>
+      <Section title="Language">
+        <select className="sb-input sb-shape-select" value={el.language} onChange={(e) => editor.updateCode({ language: e.target.value })} aria-label="Language">
+          {CODE_LANGUAGES.map((l) => (
+            <option key={l.id} value={l.id}>{l.label}</option>
+          ))}
+        </select>
+      </Section>
+      <Section title="Theme & size">
+        <div className="sb-row">
+          <ButtonGroup
+            value={el.theme}
+            onChange={(theme) => editor.updateCode({ theme })}
+            options={[
+              { value: 'light', label: 'Light theme', icon: <Icons.sun /> },
+              { value: 'dark', label: 'Dark theme', icon: <Icons.moon /> },
+            ]}
+          />
+          <NumberInput value={el.fontSize} min={8} max={64} label="Code font size" unit="px" onCommit={(fontSize) => editor.updateCode({ fontSize })} />
+        </div>
+      </Section>
+      <Section title="Show">
+        <div className="sb-code-toggles">
+          <label className="sb-switch">
+            <input type="checkbox" checked={el.lineNumbers} onChange={(e) => editor.updateCode({ lineNumbers: e.target.checked })} />
+            <span>Line numbers</span>
+          </label>
+          <label className="sb-switch">
+            <input type="checkbox" checked={el.showLanguage !== false} onChange={(e) => editor.updateCode({ showLanguage: e.target.checked })} />
+            <span title="Language name in the header">Language label</span>
+          </label>
+        </div>
+      </Section>
+      <Section title="Title">
+        <input
+          className="sb-input"
+          placeholder="File name (optional)"
+          value={title ?? el.title}
+          maxLength={120}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={commitTitle}
+          onKeyDown={(e) => e.key === 'Enter' && commitTitle()}
+          aria-label="Code block title"
+        />
+      </Section>
+      <Section title="Mark lines">
+        <div className="sb-code-marks">
+          <div className="sb-colors" role="radiogroup" aria-label="Mark colour">
+            {MARK_COLORS.map((m) => (
+              <button
+                key={m.id}
+                role="radio"
+                aria-checked={markColor === m.id}
+                aria-label={m.label}
+                title={m.label}
+                className={`sb-swatch ${markColor === m.id ? 'is-active' : ''}`}
+                style={{ background: m.swatch }}
+                onClick={() => editor.setState((s) => ({ codeDefaults: { ...s.codeDefaults, markColor: m.id } }))}
+              />
+            ))}
+          </div>
+          <div className="sb-code-marks__row">
+            <input
+              className="sb-input"
+              placeholder="e.g. 3, 5-7"
+              value={lines}
+              onChange={(e) => setLines(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && apply(markColor)}
+              aria-label="Lines to mark"
+            />
+            <button className="sb-btn sb-btn--sm" onClick={() => apply(markColor)}>Mark</button>
+            <button className="sb-btn sb-btn--sm" onClick={() => apply(null)} title="Remove the marks from these lines">Unmark</button>
+          </div>
+          {marked.length > 0 ? (
+            <p className="sb-muted sb-props__hint">
+              Marked: {formatLineList(marked)} ·{' '}
+              <button className="sb-link-btn" onClick={() => editor.setCodeMarks(el.id, marked, null)}>clear all</button>
+            </p>
+          ) : (
+            <p className="sb-muted sb-props__hint">Tip: with the block selected, click a line number to mark or unmark it.</p>
+          )}
+        </div>
+      </Section>
+    </>
+  );
+}
+
+/** Angle in degrees (for shapes, text, images, tables, code…) plus quick 90° turns for anything. */
+function RotationSection({ selected }: { selected: SketchElement[] }) {
+  const { editor } = useEditor();
+  const angled = selected.filter((e) => !bakesRotation(e));
+  const deg = angled.length ? Math.round(((angled[0].angle ?? 0) * 180) / Math.PI) % 360 : null;
+  const same = angled.every((e) => Math.round(((e.angle ?? 0) * 180) / Math.PI) % 360 === deg);
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const v = Number(draft);
+    if (draft.trim() !== '' && Number.isFinite(v)) editor.setSelectionAngle((v * Math.PI) / 180);
+    setDraft(null);
+  };
+  return (
+    <Section title="Rotation">
+      <div className="sb-row">
+        {angled.length > 0 && (
+          <label className="sb-number" title="Angle in degrees (clockwise)">
+            <input
+              type="number"
+              inputMode="numeric"
+              min={-360}
+              max={360}
+              step={15}
+              value={draft ?? (same && deg !== null ? deg : '')}
+              placeholder="mixed"
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => e.key === 'Enter' && commit()}
+              aria-label="Rotation angle in degrees"
+            />
+            <span>°</span>
+          </label>
+        )}
+        <IconBtn label="Rotate 90° counter-clockwise (Shift+Alt+R)" onClick={() => editor.rotateSelection(-Math.PI / 2)}><Icons.rotateCcw /></IconBtn>
+        <IconBtn label="Rotate 90° clockwise (Shift+R)" onClick={() => editor.rotateSelection(Math.PI / 2)}><Icons.rotateCw /></IconBtn>
+        {angled.some((e) => e.angle) && (
+          <button className="sb-btn sb-btn--sm" onClick={() => editor.setSelectionAngle(0)} title="Back to upright">Reset</button>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+/** Laser pointer: how the trail behaves and how thick it is. */
+function LaserPanel() {
+  const { editor } = useEditor();
+  const laser = useAppState((s) => s.laser);
+  return (
+    <aside className="sb-island sb-props sb-props--eraser" aria-label="Laser pointer options">
+      <Section title="Laser trail">
+        <ButtonGroup
+          value={laser.mode}
+          onChange={(mode) => editor.setLaser({ mode })}
+          options={[
+            {
+              value: 'fade',
+              label: 'Fade as you draw — the trail disappears behind the pointer',
+              icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 16c3-6 6-6 9-2" opacity="0.25" /><path d="M12 14c2.5 3 5 2 8-5" /></svg>,
+            },
+            {
+              value: 'hold',
+              label: 'Keep until release — the whole trail stays while the pen / mouse is down',
+              icon: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 16c3-6 6-6 9-2s5 2 8-5" /><circle cx="20" cy="9" r="2" fill="currentColor" /></svg>,
+            },
+          ]}
+        />
+        <p className="sb-muted sb-props__hint">
+          {laser.mode === 'hold' ? 'The trail stays visible until you lift the pen or release the mouse, then fades.' : 'The trail fades away behind the pointer as you move.'}
+        </p>
+      </Section>
+      <Section title="Size">
+        <ButtonGroup
+          value={laser.size}
+          onChange={(size) => editor.setLaser({ size })}
+          options={LASER_SIZES.map((s) => ({
+            value: s.value,
+            label: s.label,
+            icon: <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 12h16" stroke="#ff3b30" strokeWidth={Math.min(9, s.core * 0.75)} strokeLinecap="round" /></svg>,
+          }))}
+        />
+      </Section>
+    </aside>
+  );
+}
+
+const ERASER_SIZES = [
+  { value: 6, label: 'Fine' },
+  { value: 12, label: 'Medium' },
+  { value: 22, label: 'Large' },
+  { value: 36, label: 'Extra large' },
+];
+
+/** Shown while an eraser is active: stroke vs precision, and the precision eraser's size. */
+function EraserPanel() {
+  const { editor } = useEditor();
+  const tool = useAppState((s) => s.activeTool);
+  const size = useAppState((s) => s.eraser.size);
+  const precise = tool === 'precisionEraser';
+  return (
+    <aside className="sb-island sb-props sb-props--eraser" aria-label="Eraser options">
+      <Section title="Eraser">
+        <ButtonGroup
+          value={precise ? 'precision' : 'stroke'}
+          onChange={(m) => editor.setEraser(m)}
+          options={[
+            { value: 'stroke', label: 'Stroke eraser — removes whole strokes and shapes (E)', icon: <Icons.eraser /> },
+            { value: 'precision', label: 'Precision eraser — rubs out only what it touches (Shift+E)', icon: <Icons.precisionEraser /> },
+          ]}
+        />
+        <p className="sb-muted sb-props__hint">
+          {precise ? 'Rubs out just the part of pen, highlighter and line strokes it touches.' : 'Removes any stroke or shape you touch.'}
+        </p>
+      </Section>
+      {precise && (
+        <Section title="Size">
+          <ButtonGroup
+            value={size}
+            onChange={(s) => editor.setState((st) => ({ eraser: { ...st.eraser, size: s } }))}
+            options={ERASER_SIZES.map((o) => ({
+              value: o.value,
+              label: `${o.label} (${o.value * 2}px)`,
+              icon: <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r={Math.max(2, o.value / 3.6)} fill="none" stroke="currentColor" strokeWidth="1.8" /></svg>,
+            }))}
+          />
         </Section>
       )}
     </aside>

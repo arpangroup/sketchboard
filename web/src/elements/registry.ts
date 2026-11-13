@@ -1,10 +1,13 @@
-import type { ElementType, SketchElement } from '../core/types';
+import type { ElementType, Point, SketchElement } from '../core/types';
+import { rotatedBounds, toLocal } from './rotation';
 import type { ElementHandler } from './ElementHandler';
 import { DiamondHandler, EllipseHandler, RectangleHandler } from './handlers/boxShapes';
 import { FreeDrawHandler, LinearHandler } from './handlers/pointShapes';
 import { ImageHandler } from './handlers/image';
 import { TableHandler } from './handlers/table';
 import { TextHandler } from './handlers/text';
+import { FigureHandler } from './handlers/figure';
+import { CodeHandler } from './handlers/code';
 
 /**
  * Registry of element strategies. New element types are added by registering a handler -
@@ -34,6 +37,15 @@ export const elementRegistry = new ElementRegistry()
   .register(new FreeDrawHandler())
   .register(new TextHandler())
   .register(new ImageHandler())
-  .register(new TableHandler());
+  .register(new TableHandler())
+  .register(new FigureHandler())
+  .register(new CodeHandler());
 
-export const getElementBounds = (el: SketchElement) => elementRegistry.get(el).getBounds(el);
+/** Axis-aligned world bounds, including rotation. */
+export const getElementBounds = (el: SketchElement) => rotatedBounds(el, elementRegistry.get(el).getBounds(el));
+
+/** Unrotated box in the element's own frame (what selection handles of a single rotated element follow). */
+export const getRawBounds = (el: SketchElement) => elementRegistry.get(el).getBounds(el);
+
+/** Hit test that understands rotation: the point is turned into the element's own frame first. */
+export const hitTestElement = (el: SketchElement, p: Point, tolerance: number) => elementRegistry.get(el).hitTest(el, toLocal(el, p), tolerance);

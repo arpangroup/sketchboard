@@ -71,7 +71,7 @@ export class LinearHandler<T extends LinearElement = LinearElement> extends Poin
     if (el.polygon) {
       return { drawables: [g.polygon(pts, toRoughOptions(el, { fillable: true }))], paths: [] };
     }
-    drawables.push(pts.length === 2 ? g.line(pts[0][0], pts[0][1], pts[1][0], pts[1][1], opts) : g.curve(pts, opts));
+    drawables.push(pts.length === 2 ? g.line(pts[0][0], pts[0][1], pts[1][0], pts[1][1], opts) : el.sharp ? g.linearPath(pts, opts) : g.curve(pts, opts));
 
     // Arrowheads are always solid, even when the shaft is dashed.
     const headOpts = { ...opts, strokeLineDash: undefined, disableMultiStroke: false };
@@ -107,13 +107,28 @@ function arrowhead(
       return [g.line(tip.x, tip.y, x1, y1, opts), g.line(tip.x, tip.y, x2, y2, opts)];
     }
     case 'triangle':
+    case 'triangle_outline':
       return [
         g.polygon([[tip.x, tip.y], at(spread), at(-spread)], {
           ...opts,
-          fill: el.strokeColor,
+          // hollow heads are filled with paper colour so the shaft doesn't show through
+          fill: kind === 'triangle' ? el.strokeColor : '#ffffff',
           fillStyle: 'solid',
         }),
       ];
+    case 'diamond':
+    case 'diamond_outline': {
+      const len = size * 1.15;
+      const back: [number, number] = [tip.x - Math.cos(angle) * len, tip.y - Math.sin(angle) * len];
+      const sideLen = (len / 2) / Math.cos(Math.PI / 6);
+      return [
+        g.polygon([[tip.x, tip.y], at(Math.PI / 6, sideLen), back, at(-Math.PI / 6, sideLen)], {
+          ...opts,
+          fill: kind === 'diamond' ? el.strokeColor : '#ffffff',
+          fillStyle: 'solid',
+        }),
+      ];
+    }
     case 'bar': {
       const half = size / 2;
       const px = Math.cos(angle + Math.PI / 2) * half;

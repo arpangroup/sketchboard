@@ -1,15 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   HeaderFooterSlot,
   HeaderFooterText,
   PageNumberFormat,
   PageNumberPosition,
+  PageMargins,
   PageSetup,
 } from '../../../core/types';
 import { MAX_PAGES, PAGE_NUMBER_FORMAT_OPTIONS, requiredPageCount } from '../../../page/pageLayout';
-import { getPageDimensions, PAGE_SIZE_OPTIONS } from '../../../page/pageSizes';
+import { getPageDimensions, isUniformMargins, MAX_MARGIN_MM, MM_TO_PX, PAGE_SIZE_OPTIONS, type PageDimensions, resolveMargins } from '../../../page/pageSizes';
 import { useAppState, useEditor, useSceneRevision } from '../../EditorContext';
 import { Field, Modal, Segmented } from './Modal';
+import { NoServerDialog } from './NoServerDialog';
+import { serverConfigured } from '../../../cloud/serverConfig';
 
 export function PageSetupDialog({ onClose }: { onClose: () => void }) {
   const { editor } = useEditor();
@@ -51,13 +54,7 @@ export function PageSetupDialog({ onClose }: { onClose: () => void }) {
               ]}
             />
           </Field>
-          <Field label="Margin" hint={dims ? `${dims.widthMm} × ${dims.heightMm} mm` : undefined}>
-            <Segmented
-              value={setup.marginMm}
-              onChange={(marginMm) => update({ marginMm })}
-              options={[0, 5, 10, 15, 20].map((m) => ({ value: m, label: `${m} mm` }))}
-            />
-          </Field>
+          {dims && <MarginsField setup={setup} dims={dims} update={update} />}
           <PagesField />
           <HeaderFooterFields setup={setup} update={update} />
         </>
@@ -71,6 +68,92 @@ export function PageSetupDialog({ onClose }: { onClose: () => void }) {
         <button className="sb-btn sb-btn--primary" onClick={onClose}>Done</button>
       </div>
     </Modal>
+  );
+}
+
+const SIDES: Array<{ side: keyof PageMargins; label: string }> = [
+  { side: 'top', label: 'Top' },
+  { side: 'bottom', label: 'Bottom' },
+  { side: 'left', label: 'Left' },
+  { side: 'right', label: 'Right' },
+];
+
+/** Margins: presets apply to all four sides; each side can also be typed separately. */
+function MarginsField({ setup, dims, update }: { setup: PageSetup; dims: PageDimensions; update: (p: Partial<PageSetup>) => void }) {
+  const m = resolveMargins(setup);
+  const uniform = isUniformMargins(m) ? m.top : -1;
+  const [focus, setFocus] = useState<keyof PageMargins | null>(null);
+  const effective = dims.margins; // px, after shrinking to fit the paper
+  const shrunk = SIDES.some(({ side }) => Math.abs(effective[side] / MM_TO_PX - m[side]) > 0.05);
+
+  const setAll = (v: number) => update({ marginMm: v, margins: { top: v, right: v, bottom: v, left: v } });
+  const setSide = (side: keyof PageMargins, v: number) => update({ margins: { ...m, [side]: v } });
+
+  const pct = (px: number, total: number) => `${(px / total) * 100}%`;
+  return (
+    <Field
+      label="Margins"
+      hint={
+        shrunk
+          ? 'These margins are larger than the paper allows — they’re reduced to fit.'
+          : `${dims.widthMm} × ${dims.heightMm} mm paper · header & footer sit in the top & bottom margins`
+      }
+    >
+      <div className="sb-margins">
+        <Segmented value={uniform} onChange={setAll} options={[0, 5, 10, 15, 20, 25].map((v) => ({ value: v, label: `${v} mm` }))} />
+        <div className="sb-margins__body">
+          <div className="sb-margins__inputs">
+            {SIDES.map(({ side, label }) => (
+              <label key={side} className={`sb-margins__input ${focus === side ? 'is-focus' : ''}`}>
+                <span>{label}</span>
+                <MarginInput value={m[side]} onChange={(v) => setSide(side, v)} onFocus={() => setFocus(side)} onBlur={() => setFocus(null)} label={`${label} margin`} />
+                <small>mm</small>
+              </label>
+            ))}
+          </div>
+          <div className="sb-margins__paper" style={{ aspectRatio: `${dims.widthPx} / ${dims.heightPx}` }} aria-hidden="true">
+            <div
+              className="sb-margins__area"
+              style={{
+                top: pct(effective.top, dims.heightPx),
+                bottom: pct(effective.bottom, dims.heightPx),
+                left: pct(effective.left, dims.widthPx),
+                right: pct(effective.right, dims.widthPx),
+              }}
+            />
+            {focus && <div className={`sb-margins__band is-${focus}`} style={{ [focus === 'top' || focus === 'bottom' ? 'height' : 'width']: pct(effective[focus], focus === 'top' || focus === 'bottom' ? dims.heightPx : dims.widthPx) }} />}
+          </div>
+        </div>
+      </div>
+    </Field>
+  );
+}
+
+/** Number box that lets you clear and retype; commits valid values (0 – 100 mm) as you type. */
+function MarginInput(p: { value: number; onChange: (v: number) => void; onFocus: () => void; onBlur: () => void; label: string }) {
+  const [text, setText] = useState(String(p.value));
+  useEffect(() => setText((t) => (Number(t) === p.value ? t : String(p.value))), [p.value]);
+  return (
+    <input
+      className="sb-input"
+      type="number"
+      inputMode="decimal"
+      min={0}
+      max={MAX_MARGIN_MM}
+      step={1}
+      value={text}
+      aria-label={p.label}
+      onFocus={p.onFocus}
+      onBlur={() => {
+        p.onBlur();
+        setText(String(p.value)); // drop an empty / invalid entry
+      }}
+      onChange={(e) => {
+        setText(e.target.value);
+        const v = Number(e.target.value);
+        if (e.target.value.trim() !== '' && Number.isFinite(v)) p.onChange(Math.min(MAX_MARGIN_MM, Math.max(0, Math.round(v * 10) / 10)));
+      }}
+    />
   );
 }
 
@@ -176,6 +259,11 @@ function HeaderFooterFields({ setup, update }: { setup: PageSetup; update: (p: P
 }
 
 export function CollabDialog({ onClose }: { onClose: () => void }) {
+  const active = useAppState((s) => s.collab.status) !== 'idle';
+  return serverConfigured() || active ? <CollabView onClose={onClose} /> : <NoServerDialog title="Live collaboration" onClose={onClose} />;
+}
+
+function CollabView({ onClose }: { onClose: () => void }) {
   const { editor, collab } = useEditor();
   const c = useAppState((s) => s.collab);
   const [name, setName] = useState(c.username);

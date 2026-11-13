@@ -142,9 +142,9 @@ export class CanvasRenderer {
     ctx.strokeStyle = 'rgba(25, 113, 194, 0.35)';
     ctx.lineWidth = 1 / zoom;
     ctx.setLineDash([6 / zoom, 6 / zoom]);
-    const m = page.marginPx;
+    const m = page.margins;
     ctx.translate(rect.x, rect.y);
-    ctx.strokeRect(m, m, page.widthPx - m * 2, page.heightPx - m * 2);
+    ctx.strokeRect(m.left, m.top, page.widthPx - m.left - m.right, page.heightPx - m.top - m.bottom);
     ctx.restore();
   }
 

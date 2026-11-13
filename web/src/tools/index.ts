@@ -1,5 +1,6 @@
 import type { ToolType } from '../core/types';
-import { EraserTool, HandTool, InkTool, LaserTool, LinearTool, ShapeTool, TableTool, TextTool } from './creationTools';
+import { EraserTool, FigureTool, HandTool, InkTool, LaserTool, LinearTool, ShapeTool, TableTool, TextTool } from './creationTools';
+import { PrecisionEraserTool } from './PrecisionEraserTool';
 import { SelectionTool } from './SelectionTool';
 import type { Tool, ToolContext } from './Tool';
 
@@ -19,6 +20,8 @@ export function createTools(ctx: ToolContext): Map<ToolType, Tool> {
     new TextTool(ctx),
     new TableTool(ctx),
     new EraserTool(ctx),
+    new PrecisionEraserTool(ctx),
+    new FigureTool(ctx),
   ];
   return new Map(tools.map((t) => [t.type, t]));
 }

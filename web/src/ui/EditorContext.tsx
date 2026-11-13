@@ -1,6 +1,8 @@
 import { createContext, useContext, useSyncExternalStore } from 'react';
 import type { ActionManager } from '../actions/actions';
 import type { CollabSession } from '../collab/CollabSession';
+import type { WorkspaceService } from '../cloud/WorkspaceService';
+import type { LibraryStore } from '../library/LibraryStore';
 import type { AppState } from '../core/types';
 import type { Editor } from '../editor/Editor';
 import { pwa, type PwaState } from '../pwa/pwa';
@@ -9,6 +11,8 @@ export interface EditorServices {
   editor: Editor;
   actions: ActionManager;
   collab: CollabSession;
+  workspace: WorkspaceService;
+  library: LibraryStore;
 }
 
 export const EditorContext = createContext<EditorServices | null>(null);

@@ -111,19 +111,21 @@ export function pageDecorations(
   const title = setup.title?.trim() || 'Untitled';
   const fs = HEADER_FOOTER_FONT_SIZE;
   // keep text inside the page even with tiny margins
-  const inset = Math.max(d.marginPx, 16);
+  const m = d.margins;
+  const insetLeft = Math.max(m.left, 16);
+  const insetRight = Math.max(m.right, 16);
   const out: PageDecoration[] = [];
   rects.forEach((r, i) => {
     const ctx = { page: i + 1, pages: rects.length, title, date };
     for (const area of ['header', 'footer'] as const) {
       const y =
         area === 'header'
-          ? r.y + Math.max(d.marginPx / 2 + fs * 0.35, fs + 4)
-          : r.y + r.height - Math.max(d.marginPx / 2 - fs * 0.35, 6);
+          ? r.y + Math.max(m.top / 2 + fs * 0.35, fs + 4)
+          : r.y + r.height - Math.max(m.bottom / 2 - fs * 0.35, 6);
       for (const slot of ['left', 'center', 'right'] as const) {
         const tpl = slotTemplate(setup, area, slot);
         if (!tpl.trim()) continue;
-        const x = slot === 'left' ? r.x + inset : slot === 'center' ? r.x + r.width / 2 : r.x + r.width - inset;
+        const x = slot === 'left' ? r.x + insetLeft : slot === 'center' ? r.x + (m.left + r.width - m.right) / 2 : r.x + r.width - insetRight;
         out.push({ page: i + 1, text: expandTokens(tpl, ctx), x, y, align: slot, fontSize: fs });
       }
     }

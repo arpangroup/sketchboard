@@ -25,7 +25,9 @@ export function elementsToSvgMarkup(elements: readonly SketchElement[], mode: Co
   for (const el of elements) {
     const shape = shapeCache.get(el, mode);
     const opacity = mode === 'blackwhite' ? 1 : el.opacity / 100;
-    out.push(`<g transform="translate(${n(el.x)} ${n(el.y)})"${opacity < 1 ? ` opacity="${opacity}"` : ''}>`);
+    const angle = el.angle ?? 0;
+    const rotate = angle ? ` rotate(${n((angle * 180) / Math.PI)} ${n(el.width / 2)} ${n(el.height / 2)})` : '';
+    out.push(`<g transform="translate(${n(el.x)} ${n(el.y)})${rotate}"${opacity < 1 ? ` opacity="${opacity}"` : ''}>`);
 
     for (const d of shape.drawables) {
       const dash = d.options.strokeLineDash?.join(' ');

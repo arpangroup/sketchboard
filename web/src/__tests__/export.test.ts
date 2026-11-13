@@ -28,6 +28,16 @@ describe('colour modes', () => {
     expect(bw.fillStyle).toBe('hachure');
   });
 
+  it('black & white grades fills so text on pale shapes stays readable', () => {
+    const bw = (backgroundColor: string) => getColorTransformer('blackwhite').transformElement({ ...el, backgroundColor, fillStyle: 'solid' });
+    expect(bw('#fff9db')).toMatchObject({ backgroundColor: 'transparent' }); // near-white tint (UML class box) → paper
+    expect(bw('#ffffff')).toMatchObject({ backgroundColor: '#ffffff', fillStyle: 'solid' }); // white mask stays white
+    expect(bw('#a5d8ff')).toMatchObject({ backgroundColor: '#000000', fillStyle: 'hachure', fillDensity: 'light' }); // pastel → light hatching
+    const strong = bw('#1971c2');
+    expect(strong).toMatchObject({ backgroundColor: '#000000', fillStyle: 'hachure' }); // strong colour → normal hatching
+    expect(strong.fillDensity).toBe(undefined);
+  });
+
   it('grayscale keeps perceived brightness', () => {
     const g = getColorTransformer('grayscale').transformElement(el);
     const v = parseInt(g.backgroundColor.slice(1, 3), 16);

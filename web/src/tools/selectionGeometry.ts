@@ -1,10 +1,12 @@
 import { HANDLE_SIZE } from '../core/constants';
 import { expandBounds, unionBounds } from '../core/geometry';
 import type { Bounds, Point, SketchElement } from '../core/types';
-import { getElementBounds } from '../elements/registry';
+import { getElementBounds, getRawBounds } from '../elements/registry';
+import { angleOf, bakesRotation, centerOf, rotatePoint } from '../elements/rotation';
+import { tailPoint } from '../elements/handlers/figure';
 
 export type BoxHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
-export type HandleId = BoxHandle | `p${number}`;
+export type HandleId = BoxHandle | `p${number}` | 'tail' | 'rotate';
 
 export interface Handle {
   id: HandleId;
@@ -24,9 +26,30 @@ export const HANDLE_CURSORS: Record<BoxHandle, string> = {
 };
 
 const SELECTION_COLOR = '#4c6ef5';
+/** Distance (screen px) of the rotation handle above the selection box. */
+const ROTATE_OFFSET = 24;
 
 export function getSelectionBounds(els: readonly SketchElement[]): Bounds | null {
   return unionBounds(els.map(getElementBounds));
+}
+
+/**
+ * The box selection handles follow: for one rotated element, its own (unrotated) box turned by
+ * its angle around its centre; otherwise the axis-aligned bounds of everything selected.
+ */
+export interface SelectionFrame {
+  box: Bounds;
+  angle: number;
+  pivot: Point;
+}
+
+export function getSelectionFrame(els: readonly SketchElement[]): SelectionFrame | null {
+  if (els.length === 1 && !bakesRotation(els[0])) {
+    const el = els[0];
+    return { box: getRawBounds(el), angle: angleOf(el), pivot: centerOf(el) };
+  }
+  const box = getSelectionBounds(els);
+  return box ? { box, angle: 0, pivot: { x: box.x + box.width / 2, y: box.y + box.height / 2 } } : null;
 }
 
 /** Single 2-point line/arrow: endpoints are edited directly instead of a bounding box. */
@@ -39,25 +62,30 @@ export function getHandles(els: readonly SketchElement[], zoom: number): Handle[
     const el = els[0] as Extract<SketchElement, { points: Point[] }>;
     return el.points.map((p, i) => ({ id: `p${i}` as HandleId, x: el.x + p.x, y: el.y + p.y }));
   }
-  const raw = getSelectionBounds(els)!;
-  const b = expandBounds(raw, 6 / zoom);
+  const frame = getSelectionFrame(els)!;
+  const b = expandBounds(frame.box, 6 / zoom);
   const { x, y, width: w, height: h } = b;
-  const corners: Handle[] = [
+  const local: Handle[] = [
+    { id: 'rotate', x: x + w / 2, y: y - ROTATE_OFFSET / zoom },
     { id: 'nw', x, y },
     { id: 'ne', x: x + w, y },
     { id: 'se', x: x + w, y: y + h },
     { id: 'sw', x, y: y + h },
   ];
+  // a single callout also gets a handle on its tail tip
+  const tail = els.length === 1 && els[0].type === 'figure' ? tailPoint(els[0]) : null;
+  if (tail) local.unshift({ id: 'tail', x: tail.x, y: tail.y });
   const onlyText = els.every((e) => e.type === 'text');
   const bigEnough = w * zoom > 40 && h * zoom > 40;
-  if (onlyText || !bigEnough) return corners;
-  return [
-    ...corners,
-    { id: 'n', x: x + w / 2, y },
-    { id: 'e', x: x + w, y: y + h / 2 },
-    { id: 's', x: x + w / 2, y: y + h },
-    { id: 'w', x, y: y + h / 2 },
-  ];
+  if (!onlyText && bigEnough) {
+    local.push(
+      { id: 'n', x: x + w / 2, y },
+      { id: 'e', x: x + w, y: y + h / 2 },
+      { id: 's', x: x + w / 2, y: y + h },
+      { id: 'w', x, y: y + h / 2 },
+    );
+  }
+  return local.map((hd) => ({ ...hd, ...rotatePoint(hd, frame.pivot, frame.angle) }));
 }
 
 export function hitHandle(els: readonly SketchElement[], p: Point, zoom: number): HandleId | null {
@@ -66,6 +94,14 @@ export function hitHandle(els: readonly SketchElement[], p: Point, zoom: number)
     if (Math.abs(p.x - h.x) <= r && Math.abs(p.y - h.y) <= r) return h.id;
   }
   return null;
+}
+
+/** Resize cursor for a handle, turned with the selection (so a 90°-rotated box shows ↔ on its top edge). */
+export function handleCursor(id: BoxHandle, angle: number): string {
+  if (!angle) return HANDLE_CURSORS[id];
+  const order: BoxHandle[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
+  const steps = Math.round(angle / (Math.PI / 4));
+  return HANDLE_CURSORS[order[(((order.indexOf(id) + steps) % 8) + 8) % 8]];
 }
 
 export function drawSelection(
@@ -79,7 +115,8 @@ export function drawSelection(
   ctx.lineWidth = 1 / zoom;
   ctx.strokeStyle = color;
 
-  if (!isPointEditable(els)) {
+  const frame = getSelectionFrame(els);
+  if (!isPointEditable(els) && frame) {
     const pad = 6 / zoom;
     if (els.length > 1) {
       // individual outlines for multi-selection
@@ -90,15 +127,41 @@ export function drawSelection(
       }
       ctx.setLineDash([]);
     }
-    const b = expandBounds(getSelectionBounds(els)!, pad);
+    const b = expandBounds(frame.box, pad);
+    ctx.save();
+    ctx.translate(frame.pivot.x, frame.pivot.y);
+    ctx.rotate(frame.angle);
+    ctx.translate(-frame.pivot.x, -frame.pivot.y);
     ctx.strokeRect(b.x, b.y, b.width, b.height);
+    if (!els.some((e) => e.locked)) {
+      // stem of the rotation handle
+      ctx.beginPath();
+      ctx.moveTo(b.x + b.width / 2, b.y);
+      ctx.lineTo(b.x + b.width / 2, b.y - (ROTATE_OFFSET - HANDLE_SIZE / 2) / zoom);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   const size = HANDLE_SIZE / zoom;
   ctx.fillStyle = '#fff';
   for (const h of getHandles(els, zoom)) {
     ctx.beginPath();
-    if (h.id.startsWith('p')) ctx.arc(h.x, h.y, size / 2, 0, Math.PI * 2);
+    if (h.id === 'tail') {
+      // yellow diamond, like the adjustment handle in office apps
+      const r = size * 0.7;
+      ctx.moveTo(h.x, h.y - r);
+      ctx.lineTo(h.x + r, h.y);
+      ctx.lineTo(h.x, h.y + r);
+      ctx.lineTo(h.x - r, h.y);
+      ctx.closePath();
+      ctx.fillStyle = '#ffd43b';
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      continue;
+    }
+    if (h.id === 'rotate' || h.id.startsWith('p')) ctx.arc(h.x, h.y, (h.id === 'rotate' ? size * 0.62 : size / 2), 0, Math.PI * 2);
     else ctx.roundRect(h.x - size / 2, h.y - size / 2, size, size, 2 / zoom);
     ctx.fill();
     ctx.stroke();

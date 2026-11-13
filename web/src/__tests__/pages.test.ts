@@ -4,6 +4,7 @@ import type { PageSetup } from '../core/types';
 import { createShape } from '../elements/factory';
 import { buildPrintSvg } from '../export/printService';
 import { expandTokens, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
+import { getPageDimensions, getPrintableBounds, MM_TO_PX, resolveMargins } from '../page/pageSizes';
 
 const setup: PageSetup = {
   size: 'A4',
@@ -39,5 +40,29 @@ describe('page layout', () => {
     const doc = buildPrintSvg({ elements: [rect(100), rect(h + 50)], pageSetup: setup, colorMode: 'blackwhite', scope: 'page' });
     expect(doc.pages).toHaveLength(2);
     expect(doc.pages[1]).toContain('Page 2 of 2');
+  });
+});
+
+describe('per-side margins', () => {
+  const base = { size: 'A4' as const, orientation: 'portrait' as const, marginMm: 10 };
+
+  it('falls back to the uniform margin for older files', () => {
+    expect(resolveMargins(base)).toEqual({ top: 10, right: 10, bottom: 10, left: 10 });
+  });
+
+  it('uses each side separately for the printable area', () => {
+    const setup = { ...base, margins: { top: 25, right: 10, bottom: 15, left: 30 } };
+    const p = getPrintableBounds(setup)!;
+    const d = getPageDimensions(setup)!;
+    expect(p.x).toBeCloseTo(30 * MM_TO_PX, 3);
+    expect(p.y).toBeCloseTo(25 * MM_TO_PX, 3);
+    expect(p.width).toBeCloseTo(d.widthPx - 40 * MM_TO_PX, 3);
+    expect(p.height).toBeCloseTo(d.heightPx - 40 * MM_TO_PX, 3);
+  });
+
+  it('sanitises junk and shrinks margins that do not fit the paper', () => {
+    expect(resolveMargins({ marginMm: 10, margins: { top: -5, right: Number.NaN, bottom: 500, left: 12 } })).toEqual({ top: 0, right: 10, bottom: 100, left: 12 });
+    const d = getPageDimensions({ size: 'A5', orientation: 'portrait', marginMm: 0, margins: { top: 0, right: 100, bottom: 0, left: 100 } })!;
+    expect((d.widthPx - d.margins.left - d.margins.right) / MM_TO_PX).toBeCloseTo(20, 3); // 20 mm always left to draw in
   });
 });

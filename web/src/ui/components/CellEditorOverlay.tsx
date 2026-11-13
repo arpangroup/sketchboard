@@ -54,6 +54,8 @@ export function CellEditorOverlay() {
         top,
         width,
         minHeight: height,
+        transform: el.angle ? `rotate(${el.angle}rad)` : undefined,
+        transformOrigin: el.angle ? `${(el.width / 2 - xs[cell.col]) * z}px ${(el.height / 2 - ys[cell.row]) * z}px` : undefined,
         padding: pad,
         font: `${cellWeight(el, cell.row)} ${el.fontSize * z}px ${fontCss(el.fontFamily)}`,
         lineHeight: LINE_HEIGHT,

@@ -70,6 +70,7 @@ class GrayscaleTransformer implements ColorTransformer {
       out.textColor = this.transformColor(out.textColor);
       out.headerColor = this.transformColor(out.headerColor);
     }
+    if (out.type === 'code') out.printMode = 'grayscale';
     return out;
   }
 
@@ -79,10 +80,17 @@ class GrayscaleTransformer implements ColorTransformer {
 /**
  * Pure black & white, ideal for laser printers / photocopies:
  *  - every stroke and text becomes black
- *  - fills keep their *pattern* but become black hatching, so filled areas remain
- *    distinguishable without ink-hungry solid blocks
+ *  - fills become black hatching, graded by how light the colour is, so text on top stays readable:
+ *      white (≥ 250)            → stays white (it's covering something, e.g. a toggle knob)
+ *      near-white tint (≥ 228)  → no fill (paper-like backgrounds: notes, class boxes, cards)
+ *      pastel (≥ 150)           → light, sparse hatching
+ *      strong colour            → normal hatching (solid fills become hatching too)
  *  - background becomes white
  */
+export const BW_WHITE = 250;
+export const BW_TINT = 228;
+export const BW_PASTEL = 150;
+
 class BlackWhiteTransformer implements ColorTransformer {
   readonly mode = 'blackwhite' as const;
   readonly label = 'Black & white';
@@ -92,17 +100,21 @@ class BlackWhiteTransformer implements ColorTransformer {
   }
 
   transformElement(el: SketchElement): SketchElement {
+    if (el.type === 'code') return { ...el, printMode: 'blackwhite', opacity: 100 };
     if (el.type === 'table') {
       // tables: black rules & text, no fills (keeps text readable on any printer)
       return { ...el, strokeColor: '#000000', textColor: '#000000', opacity: 100, backgroundColor: 'transparent', headerColor: 'transparent' };
     }
-    const hasFill = !isTransparent(el.backgroundColor);
+    const base = { ...el, strokeColor: '#000000', opacity: 100 };
+    if (isTransparent(el.backgroundColor)) return { ...base, backgroundColor: 'transparent' };
+    const l = luminance(el.backgroundColor);
+    if (l >= BW_WHITE) return { ...base, backgroundColor: '#ffffff', fillStyle: 'solid' };
+    if (l >= BW_TINT) return { ...base, backgroundColor: 'transparent' };
     return {
-      ...el,
-      strokeColor: '#000000',
-      opacity: 100,
-      backgroundColor: hasFill ? '#000000' : 'transparent',
-      fillStyle: hasFill && el.fillStyle === 'solid' ? 'hachure' : el.fillStyle,
+      ...base,
+      backgroundColor: '#000000',
+      fillStyle: el.fillStyle === 'solid' ? 'hachure' : el.fillStyle,
+      ...(l >= BW_PASTEL ? { fillDensity: 'light' as const } : {}),
     };
   }
 

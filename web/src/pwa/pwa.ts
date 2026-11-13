@@ -95,7 +95,7 @@ class PwaManager {
     });
     window.addEventListener('load', async () => {
       try {
-        const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        const reg = await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL });
         const track = (w: ServiceWorker | null) => {
           if (!w) return;
           w.addEventListener('statechange', () => {

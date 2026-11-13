@@ -29,7 +29,7 @@ function signature(el: SketchElement, mode: ColorMode): string {
       break;
     case 'line':
     case 'arrow':
-      parts.push(el.startArrowhead, el.endArrowhead, el.polygon);
+      parts.push(el.startArrowhead, el.endArrowhead, el.polygon, el.sharp);
       break;
     case 'text':
       parts.push(el.text, el.fontSize, el.fontFamily, el.textAlign, el.fontWeight, el.fontStyle, el.underline);
@@ -39,6 +39,12 @@ function signature(el: SketchElement, mode: ColorMode): string {
       break;
     case 'image':
       parts.push(el.fileId);
+      break;
+    case 'code':
+      parts.push(el.code, el.language, el.theme, el.fontSize, el.lineNumbers, el.showLanguage, el.title, JSON.stringify(el.marks));
+      break;
+    case 'figure':
+      parts.push(el.figure, el.tail?.x, el.tail?.y);
       break;
     case 'table':
       parts.push(
