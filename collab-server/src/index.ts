@@ -1,11 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
+import path from 'node:path';
 import { InMemoryRoomBroker, type RoomBroker } from './broker.js';
+import { createApi } from './storage/api.js';
+import { LocalDiskBlobStore } from './storage/BlobStore.js';
+import { DrawingRepository, LinkRepository } from './storage/repositories.js';
 
 /**
- * SketchBoard collaboration relay.
- * Zero-knowledge: payloads are AES-GCM encrypted in the browser and the key never leaves the
+ * SketchBoard server: live-collaboration relay (WebSocket) + workspace storage API (HTTP /api).
+ *
+ * Relay - zero-knowledge: payloads are AES-GCM encrypted in the browser and the key never leaves the
  * URL fragment, so this server can't read drawings. It only routes opaque blobs between peers.
  */
 
@@ -14,6 +19,18 @@ const MAX_PAYLOAD = Number(process.env.MAX_PAYLOAD_BYTES ?? 5 * 1024 * 1024);
 const MAX_ROOM_ID = 64;
 const RATE_LIMIT_PER_SEC = Number(process.env.RATE_LIMIT_PER_SEC ?? 120);
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+/** Where saved drawings live: a separate folder inside the directory the server runs from. */
+const STORAGE_DIR = path.resolve(process.env.STORAGE_DIR ?? 'storage');
+const MAX_UPLOAD = Number(process.env.MAX_UPLOAD_BYTES ?? 30 * 1024 * 1024);
+
+const blobs = new LocalDiskBlobStore(STORAGE_DIR);
+const api = createApi({
+  drawings: new DrawingRepository(blobs),
+  links: new LinkRepository(blobs, MAX_UPLOAD),
+  allowedOrigins: ALLOWED_ORIGINS,
+  maxBodyBytes: MAX_UPLOAD,
+  writesPerMinute: Number(process.env.WRITES_PER_MINUTE ?? 120),
+});
 
 type ClientMessage =
   | { type: 'join'; roomId: string }
@@ -29,7 +46,8 @@ interface Client {
 
 const broker: RoomBroker = new InMemoryRoomBroker();
 
-const http = createServer((req, res) => {
+const http = createServer(async (req, res) => {
+  if (await api(req, res)) return;
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, rooms: broker.roomCount(), clients: broker.memberCount() }));
@@ -114,7 +132,8 @@ setInterval(() => {
 setInterval(() => clients.forEach((c) => (c.tokens = RATE_LIMIT_PER_SEC)), 1000);
 
 http.listen(PORT, () => {
-  console.log(`SketchBoard collab relay listening on :${PORT}`);
+  console.log(`SketchBoard server listening on :${PORT} (collaboration + workspace API)`);
+  console.log(`Saving drawings to ${STORAGE_DIR}`);
 });
 
 const shutdown = () => {

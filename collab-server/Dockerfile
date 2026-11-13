@@ -12,6 +12,8 @@ ENV NODE_ENV=production PORT=3002
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
+RUN mkdir -p /app/storage && chown node:node /app/storage
+VOLUME /app/storage
 EXPOSE 3002
 USER node
 CMD ["node", "dist/index.js"]

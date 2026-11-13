@@ -12,6 +12,10 @@ services:
     build: ./collab-server
     environment:
       PORT: 3002
+      STORAGE_DIR: /app/storage
       # ALLOWED_ORIGINS: http://localhost:8080
     ports:
       - "3002:3002"
+    volumes:
+      # saved drawings + share links live in ./storage next to this file
+      - ./storage:/app/storage

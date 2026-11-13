@@ -44,18 +44,29 @@ flowchart LR
   R2 <--> PS
   R2 <-- WSS --> B[Browser B]
   UI -. print / export .-> EX[SVG / PNG / Print service]
+  UI --> WS[WorkspaceService]
+  WS -- "HTTPS /api" --> API[Workspace API]
+  API --> REPO[DrawingRepository / LinkRepository]
+  REPO --> BS[(BlobStore: ./storage folder → S3/GCS)]
+  UI --> LIB[LibraryStore + built-in library]
 ```
 
 * **Client-heavy architecture.** All editing, rendering, export and printing run in the browser. The server is only a relay,
   which keeps infrastructure cheap and lets the app work offline.
 * **Collaboration** is peer-state based: each browser holds the full scene; peers broadcast element **deltas**; every peer applies
   the same deterministic merge rule, so they converge without server-side logic.
-* **Optional cloud tier** (Excalidraw+-like: persistent rooms, team spaces) is an add-on service — see §6.
+* **Workspace storage** (implemented): the same Node server exposes a small REST API that saves drawings, previews and
+  encrypted share links to a storage folder behind a `BlobStore` abstraction — see §5.
+* **Optional cloud tier** (Excalidraw+-like: accounts, team spaces) builds on that API — see §5 *Production hardening*.
 
 ### Request flows
 
 **Drawing a rectangle (local):** `pointerdown` → `Editor` → active `ShapeTool` (creates element after a 3 px threshold) → `Scene.upsert`
 → change event → `requestRender` (one per animation frame) + debounced autosave → on `pointerup` `History.commit()` records one undo step.
+
+**Saving to the workspace:** *Save* → `WorkspaceService.save` → scene JSON + PNG thumbnail → `PUT /api/drawings/:id`
+with the last seen `revision` (or `POST` for a new drawing) → `DrawingRepository` serialises the write, compares revisions
+(409 on conflict), writes files atomically, updates the index → client stores the new `{id, name, revision}`.
 
 **Collaboration:**
 ```mermaid
@@ -283,16 +294,47 @@ Encrypted payloads (`PeerPayload`): `request-scene`, `scene-init {elements}`, `s
 `chat {id, text, username, at}`, `laser {points[]}` (volatile); `scene-init`/`scene-update` may carry `files[]` (image data).
 `GET /health` returns `{ok, rooms, clients}` for load-balancer probes.
 
-### Cloud REST API (proposed)
+### Workspace REST API (implemented — `collab-server/src/storage`)
+Same process and port as the relay (`http://host:3002/api`). JSON unless noted; CORS honours `ALLOWED_ORIGINS`;
+writes are rate-limited per IP (`WRITES_PER_MINUTE`); bodies capped by `MAX_UPLOAD_BYTES` (30 MB).
 ```
-POST   /v1/scenes                 → {id}            create (body: encrypted blob)
-GET    /v1/scenes?team=…&cursor=… → paginated list   (metadata only)
-GET    /v1/scenes/:id             → encrypted blob
-PUT    /v1/scenes/:id             If-Match: <etag> → optimistic concurrency
-DELETE /v1/scenes/:id
-GET    /v1/scenes/:id/versions    → snapshot list
+GET    /api/drawings                     → { drawings: DrawingMeta[] }   newest first, served from an in-memory index
+POST   /api/drawings                     { name, scene, thumbnail? }  → 201 DrawingMeta
+GET    /api/drawings/:id                 → DrawingMeta
+PUT    /api/drawings/:id                 { name?, scene?, thumbnail?, revision? } → DrawingMeta   (409 + {current} if revision is stale)
+DELETE /api/drawings/:id                 → 204
+GET    /api/drawings/:id/scene           → .sketchboard JSON   (?download=1 → Content-Disposition: attachment)
+GET    /api/drawings/:id/thumbnail       → image/png
+POST   /api/links                        body: base64url ciphertext → 201 { id }
+GET    /api/links/:id                    → ciphertext (immutable, cacheable)
 ```
-The client plugs in by implementing `StorageAdapter` (e.g. `CloudStorageAdapter`) — no editor changes.
+`DrawingMeta = { id, name, createdAt, updatedAt, revision, size, elementCount, hasThumbnail }`.
+
+**Storage layout** (`STORAGE_DIR`, default `./storage` in the server's working directory):
+```
+storage/drawings/<id>/meta.json · scene.sketchboard · thumbnail.png
+storage/links/<id>/data.txt          (AES-GCM ciphertext; key only in the link's #fragment)
+```
+* `BlobStore` interface (`put/get/delete/listFolders/size`) ← `LocalDiskBlobStore` today; an `S3BlobStore`/`GcsBlobStore`
+  is a drop-in replacement (Adapter + DIP) — the repositories and API don't change.
+* `DrawingRepository` validates scenes (must be `type: "sketchboard"`), accepts only real PNG thumbnails (magic bytes; SVG
+  is refused because it can carry script), writes atomically (temp file + rename), serialises writes per drawing (in-process
+  queue) and implements **optimistic locking** with `revision`.
+* Ids are 96-bit random base64url, validated with a strict regex before touching the filesystem; `LocalDiskBlobStore`
+  additionally refuses any key that resolves outside the root (path-traversal defence in depth).
+
+**Client** (`web/src/cloud`): `WorkspaceApi` (typed HTTP client, the only code that knows URLs) → `WorkspaceService`
+(application service: save / open / rename / delete / download / share; links the board to a drawing via
+`AppState.workspaceFile = {id, name, revision}`, persisted across reloads) → `WorkspaceDialog` (grid with PNG previews,
+full-size SVG preview, per-card actions). Saving sends the last seen `revision`; on 409 the user chooses *replace* or
+*keep both* (saved as “(copy)”). Thumbnails are rendered client-side with the PNG exporter (≤ 480×320).
+
+**Export to link** (`cloud/shareLink.ts`): `encrypt(scene)` with a fresh AES-GCM-128 key → `POST /api/links` →
+`https://app/#json=<id>,<key>`. Opening the link asks before replacing a non-empty board, then loads a copy.
+
+### Production hardening (proposed)
+Accounts/teams (OAuth + per-user prefixes `users/<uid>/drawings/…`), an `If-Match` ETag instead of a body revision,
+object storage + a metadata table (PostgreSQL schema above) for listing/pagination, signed URLs for thumbnails, link expiry.
 
 ## 6. Design patterns & SOLID
 
@@ -308,6 +350,9 @@ The client plugs in by implementing `StorageAdapter` (e.g. `CloudStorageAdapter`
 | Repository | `Scene` | single source of truth with tombstones |
 | Adapter / DI | `StorageAdapter`, `CollabTransport` | swap localStorage↔cloud, WebSocket↔WebRTC↔test double (DIP) |
 | Factory | `elements/factory.ts`, `createTools` | one place constructs valid objects |
+| Builder | `library/ItemBuilder` | built-in library items read like a sketch, not element plumbing |
+| Repository + Adapter | `DrawingRepository` / `BlobStore` (server) | swap local disk ↔ S3/GCS without touching the API |
+| Application service | `WorkspaceService` | orchestrates Editor + API so UI components stay thin |
 | Composition root | `App.createServices` | builds the object graph once and injects it |
 
 * **S** — renderer only draws, tools only interpret input, Scene only stores.
@@ -377,6 +422,10 @@ loading, text boxes are re-measured without bumping their version (derived data 
 always receives its `pointerup`, even during a pinch. Draw-to-shape ignores strokes under 70 screen px so handwriting stays ink.
 
 ### Pages, header & footer
+Margins: `PageSetup.margins = {top, right, bottom, left}` (mm) overrides the older uniform `marginMm`; `resolveMargins()` sanitises
+(0–100 mm) and falls back to `marginMm` for older files, and `getPageDimensions()` shrinks opposite margins proportionally so at
+least 20 mm stays printable. The printable-area guide, *fit to page* printing and header/footer placement (left/right slots
+follow the side margins, header/footer sit in the top/bottom margins) all read the per-side values.
 `page/pageLayout.ts`: pages are stacked vertically from the origin with a 48 px gap; `requiredPageCount` = max(`pageSetup.pageCount`,
 pages needed by content in the page column). Headers/footers/page numbers are **decorations** computed from `PageSetup`
 (`header`/`footer` slots, `pageNumbers {enabled, position, format}`, `title`, tokens `{page} {pages} {date} {title}`) — never stored as
@@ -400,6 +449,108 @@ with border = the normal stroke style, so colour modes, roughness and dash style
 * Editing: `CellEditorOverlay` (textarea over the cell), `Editor.startCellEditing/moveEditingCell/tableCommand/updateTable`;
   the "table cursor" (last cell touched) targets row/column commands. `SelectionTool` adds a `tableLine` drag mode for grid lines and
   click-to-edit on an already-selected table. Imported files are repaired so `cells` always matches rows × cols.
+
+### Rotation
+* Box-like elements (shapes, figures, text, images, tables, code) store `angle` (radians, clockwise) and are rotated around
+  the centre of their x/y/width/height box **at draw time** (canvas `rotate`, SVG `rotate(deg cx cy)`), so handlers,
+  layout and the shape cache stay rotation-free. Lines, arrows and ink never store an angle: rotating them rotates their
+  points (`rotateAround` → `pointsToElementGeometry`).
+* `elements/rotation.ts`: `toLocal` (world → element frame), `rotatedBounds` (AABB used by `getElementBounds` for culling,
+  selection, export regions, pages), `rotateAround(el, delta, pivot)` for groups, `keepTopLeft` so rotated elements that grow
+  (typing, column drag, font change) keep their top-left corner on screen.
+* `hitTestElement` turns the pointer into the element frame before calling the handler, so every handler's hit test
+  works unchanged. Table cells, grid lines, code line numbers and callout tails use `toLocal` the same way.
+* Selection: `getSelectionFrame` — one rotated element → its own box turned by its angle (handles, outline and resize
+  cursors follow it); otherwise the axis-aligned bounds. A round **rotate handle** sits above the box (Shift = 15° snap);
+  resizing a rotated element happens in its frame and the new centre is mapped back. Panel: angle field, ±90°, reset.
+  Text / cell / code editors are CSS-rotated around the element centre so editing happens in place.
+* Excalidraw uses the same convention (angle around the box centre), so rotated shapes/text/images import and export
+  directly; multi-part exports (tables, code, figures) turn each part around the element centre.
+
+### Code blocks
+* `CodeElement { code, language, theme, fontSize, lineNumbers, title, marks: {line → yellow|green|red|blue} }`.
+  Blocks size to their content (`codeLayout`: char width measured once per font size, 1.5 line height, header, gutter);
+  resizing scales the font, like text.
+* `elements/code/highlight.ts`: a dependency-free scanner driven by per-language definitions (keywords, literals, types,
+  line/block comments, string delimiters incl. multi-line ones, `$vars`, decorators, JSON/YAML keys, markup mode for
+  HTML/XML). It scans the whole source once (so block comments/template strings span lines) and then splits tokens into lines.
+* `CodeHandler` renders card + window header, marked-line bands (+ accent bar), right-aligned line numbers and one text run
+  per same-coloured token span (positioned by column × char width) — consumed unchanged by canvas, SVG export and print.
+  Print colour modes set a render-only `printMode`: grayscale maps every palette colour; black & white prints black on white
+  and shows marks as a bar + gutter hatching so the code stays readable.
+* Editing: `CodeEditorOverlay` is a textarea with **transparent text** aligned over the code area, so the canvas shows live
+  highlighting while the textarea supplies caret, selection, IME and clipboard (Tab/Shift+Tab indent, Enter keeps indentation).
+* Marking: click a line number of a selected block (`SelectionTool` → `toggleCodeLine`) or type ranges in the panel
+  (`parseLineList("3, 5-7")`). Search finds code lines; Excalidraw export = rectangle + monospace text with customData for
+  a lossless round trip.
+
+### Shapes gallery (figures)
+* `FigureElement { figure, tail? }` — one element type for ~59 gallery shapes. `elements/figures/figures.ts` is the catalogue:
+  each entry is `build(w, h, tail) → { outline, details? }` written with `PathBuilder`, which emits an SVG path (rough.js
+  draws it with fills/hachure) **and** a sampled polyline of the same outline (hit testing, Excalidraw export). Adding a shape =
+  one catalogue entry; renderer, export, print, collaboration and undo need no changes (Strategy via `FigureHandler`).
+* Sections: Basic shapes, Stars, Block arrows, Callouts (rectangle, rounded, oval, thought bubble), Flowchart (process,
+  decision, data, document, multi-document, terminator, preparation, manual input/operation, connector, off-page, card,
+  punched tape, delay, stored data, database, display, loop limit, extract, merge, sort, collate, summing junction, or…).
+* Callout tails are stored relative to the body box (so resizing keeps them pointing at the same spot), are included in the
+  element bounds, and are dragged with a yellow `tail` handle in `SelectionTool`. The wedge is attached to the edge facing
+  the tail (rect/rounded) or the ellipse angle facing it (oval); thought bubbles trail towards it.
+* Toolbar *Shapes* button (`S`) opens `ShapeGallery` (searchable, icons generated from the same geometry); drag to draw,
+  click to drop at the shape's natural ratio, Shift keeps proportions. The panel's *Shape* dropdown swaps a selected figure.
+* Excalidraw export: each outline/detail path → grouped `line` (closed outlines as filled polygons) with
+  `customData.sketchboard.figure`, so re-import restores the figure (moved/resized in Excalidraw is honoured).
+
+### Precision eraser
+`PrecisionEraserTool` (`Shift+E`; the eraser button remembers stroke vs precision) sweeps a disc of `eraser.size` screen px.
+`elements/partialErase.ts` → `eraseFromStroke(el, a, b, r)`: densifies the stroke (pressures interpolated), drops points within
+`r + half stroke width` of the swept segment, and turns each surviving run into a new element (crumbs dropped); the original
+is tombstoned. Works on pen/highlighter ink and lines/arrows (arrowheads kept only on surviving ends; closed polygons open
+up). Shapes and text are untouched. One gesture = one undo step; peers receive it as normal element updates.
+
+### Black & white printing of fills
+`BlackWhiteTransformer` grades fills by luminance so text on filled shapes stays readable: white (≥ 250) stays a white mask,
+near-white tints (≥ 228, e.g. UML class boxes, notes) print as paper, pastels (≥ 150) get light sparse hatching
+(`fillDensity: 'light'`, a render-only flag), strong colours keep normal hatching.
+
+### Libraries
+* `LibraryItem { id, name, created, elements[], category? }` — elements are normalised so the item's bounding box starts
+  at (0, 0); inserting clones them with fresh ids around the drop point (`Editor.insertLibraryItem`).
+* **Personal library** — `LibraryStore` (observable store, persisted in `localStorage`; image pixels stay in the IndexedDB
+  FileStore and are bundled only on export). Writes go to storage *before* updating memory, so a full quota leaves the
+  library unchanged and the user gets a clear message.
+* **Formats** — `library/libraryFormat.ts`: `.sketchboardlib` (items + image files) and `.excalidrawlib` v2 export; import
+  of both plus Excalidraw v1 (`library: Element[][]`) via the Excalidraw adapter. `#addLibrary=<https url>` (sent back by
+  libraries.excalidraw.com's “Add to Excalidraw”) imports into the personal library.
+* **SketchBoard library** — `library/builtin.ts` defines items in code with `ItemBuilder` (Builder pattern over the element
+  factory: `rect / ellipse / diamond / line / arrow / polygon / text / label / box / table`), built lazily once. Generated
+  rather than stored as JSON, so items always match the current element model. Sections: Database, UML & class
+  diagrams, Flowchart, Forms & UI, Architecture.
+* UML relations needed new arrowheads: `triangle_outline` (inheritance/realization), `diamond` (composition),
+  `diamond_outline` (aggregation) — hollow heads are filled with paper colour so the shaft doesn't show through.
+* UI: sidebar *Libraries* tab (`LibraryPanel`) — search, add selection / canvas, import/export menu, collapsible sections,
+  SVG previews (cached per item in a `WeakMap`), click to insert at the screen centre or HTML5-drag onto the board.
+
+### Excalidraw interoperability
+`persistence/excalidraw.ts` is an **Adapter** between the two element models; `persistence/importScene.ts` is the single
+entry point (`parseAnyScene`) used by Open, drag & drop, the PWA launch queue — it sniffs the format, converts, then runs the
+normal `parseScene` validation. Paste also accepts Excalidraw's `excalidraw/clipboard` payload.
+
+| Excalidraw | SketchBoard (import) | Back to Excalidraw (export) |
+|---|---|---|
+| rectangle / diamond / ellipse, `roundness` | same type, `rounded` | `roundness` type 3 (rect) / 2 |
+| rotated box (`angle`) | closed polygon line with the rotated corners (no rotation in the model) | polygon line |
+| line / arrow, `points`, arrowheads, `polygon` | points re-based to ≥ 0; `triangle_outline→triangle`, `circle/diamond→dot` | points re-based on the first point |
+| elbow / sharp multi-point arrows | `sharp: true` → straight segments (`linearPath`) | `roundness: null` |
+| freedraw (`pressures`, `simulatePressure`) | pen ink; nib = Excalidraw `strokeWidth × 4.25` | same; highlighter → translucent freedraw |
+| text (`fontFamily` 1–9, containers) | font mapped (Excalifont/Virgil→Kalam, Nunito, Cascadia→JetBrains Mono…); re-measured and anchored by alignment so labels stay centred | `fontFamily` number, `lineHeight 1.25` |
+| image + `files` | image + FileStore (same `BinaryFile` shape) | `status: "saved"` |
+| frame / magicframe / embeddable | outline rectangle + caption | — |
+| — | table | grouped cell rectangles with **bound text** (wraps & stays editable in Excalidraw) |
+
+SketchBoard-only data rides in Excalidraw's `customData.sketchboard` (preserved by Excalidraw): text bold/italic/underline and
+exact font, highlighter kind, and the table's properties + each cell's row/col. Import rebuilds the table from the cell texts
+(even if edited in Excalidraw) when every cell is still present, otherwise keeps the plain shapes. Export writes valid
+fractional `index` keys. Not carried over: arrow bindings (arrows don't follow shapes after import), groups, links, rotation of text/images.
 
 ## 10. Mobile & PWA
 ```mermaid
