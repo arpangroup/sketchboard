@@ -65,11 +65,11 @@ Point the app at a deployed server with `VITE_COLLAB_SERVER_URL=wss://collab.exa
 ### Hosting on GitHub Pages
 `.github/workflows/deploy-pages.yml` tests, builds and publishes the web app on every push to `main`.
 1. Push the repo to GitHub, then **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-2. Push to `main` (or run the workflow from the **Actions** tab). The app appears at `https://<user>.github.io/<repo>/`, e.g. https://arpangroup.github.io/sketchboard-whiteboard/.
+2. Push to `main` (or run the workflow from the **Actions** tab). The app appears at `https://<user>.github.io/<repo>/`, e.g. https://arpangroup.github.io/sketchboard/.
 
 Pages only serves static files, so by default live collaboration, the workspace and export-to-link are switched off and explain why; drawing, printing, files, Excalidraw import/export, the library and the installable app all work. To turn them on, run `collab-server` on any host with HTTPS (Render, Fly.io, a VPS…), start it with `ALLOWED_ORIGINS=https://<user>.github.io`, and add a repository **variable** (Settings → Secrets and variables → Actions → Variables) `SKETCHBOARD_SERVER_URL=wss://your-server.example.com`, then re-run the workflow. It must be `wss://` — browsers block `ws://` from an HTTPS page.
 
-To try a sub-folder build locally: `BASE_PATH=/sketchboard-whiteboard/ VITE_NO_SERVER=true npm run build && npm run preview` (inside `web/`).
+To try a sub-folder build locally: `VITE_NO_SERVER=true npm run build -- --base=/sketchboard/ && npm run preview -- --base=/sketchboard/` (inside `web/`).
 
 ## Using it
 
@@ -124,5 +124,3 @@ sketchboard/
 ```
 
 See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design.
-
----
