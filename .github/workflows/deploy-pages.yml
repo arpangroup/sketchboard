@@ -1,0 +1,67 @@
+# Builds the web app and publishes it to GitHub Pages on every push to main.
+#
+# One-time setup: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# Optional: to turn on live collaboration, the workspace and share links, run the collab-server
+# somewhere public (HTTPS) and add a repository variable (Settings → Secrets and variables →
+# Actions → Variables) named SKETCHBOARD_SERVER_URL, e.g. wss://sketchboard-server.example.com
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        env:
+          VITE_COLLAB_SERVER_URL: ${{ vars.SKETCHBOARD_SERVER_URL }}
+          VITE_NO_SERVER: ${{ vars.SKETCHBOARD_SERVER_URL == '' && 'true' || 'false' }}
+        # Pages serves project sites from https://<user>.github.io/<repo>/
+        run: npm run build -- --base=/${{ github.event.repository.name }}/
+
+      # Pages has no SPA rewrites: serve the app for unknown paths too.
+      - run: cp dist/index.html dist/404.html
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
