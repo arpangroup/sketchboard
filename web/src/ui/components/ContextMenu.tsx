@@ -25,6 +25,7 @@ const CANVAS_MENU: Entry[] = [
   'copyAsPng', 'copyAsSvg', '-',
   'undo', 'redo', '-',
   'toggleGrid', 'zoomToFit', 'zoomToPage', '-',
+  'insertPageAbove', 'insertPageBelow', 'deletePage', '-',
   'addCanvasToLibrary',
 ];
 

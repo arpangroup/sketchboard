@@ -409,6 +409,18 @@ export const Icons = {
       <path d="M6 13c-2 0-3 1.5-3 3.5S2 20 2 20s3 .5 5-1.5c1-1 1-2.5 0-3.5" />
     </Svg>
   ),
+  pageAbove: () => (
+    <Svg>
+      <rect x="6" y="10" width="12" height="11" rx="1.5" />
+      <path d="M12 2v6M9 5h6" />
+    </Svg>
+  ),
+  pageBelow: () => (
+    <Svg>
+      <rect x="6" y="3" width="12" height="11" rx="1.5" />
+      <path d="M12 16v6M9 19h6" />
+    </Svg>
+  ),
 };
 
 export type IconName = keyof typeof Icons;

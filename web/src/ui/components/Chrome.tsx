@@ -3,7 +3,7 @@ import { PAGE_SIZES } from '../../page/pageSizes';
 import { useAppState, useEditor, useSceneRevision } from '../EditorContext';
 import { Icons } from '../icons/Icons';
 
-/** Top-right: print + share. */
+/** Top-right: share (icon) + sidebar. Print lives in the main menu and on Ctrl+P. */
 export function TopRightActions() {
   const { actions } = useEditor();
   const status = useAppState((s) => s.collab.status);
@@ -14,17 +14,14 @@ export function TopRightActions() {
   const unread = useAppState((s) => s.chat.unread);
   return (
     <div className="sb-top-right">
-      <button className="sb-island sb-btn" onClick={() => actions.execute('dialog:print')} title="Print (Ctrl+P)">
-        <Icons.print />
-        <span>Print</span>
-      </button>
       <button
-        className={`sb-btn sb-btn--primary ${status === 'connected' ? 'is-live' : ''}`}
+        className={`sb-island sb-icon-btn sb-share-btn ${status === 'connected' ? 'is-live' : ''}`}
         onClick={() => actions.execute('dialog:collab')}
-        title="Live collaboration"
+        aria-label={status === 'connected' ? `Live collaboration — ${count + 1} people here` : 'Share — live collaboration'}
+        title={status === 'connected' ? `Live · ${count + 1} here` : 'Share — live collaboration'}
       >
         <Icons.share />
-        <span>{status === 'connected' ? `Live${count ? ` · ${count + 1}` : ''}` : 'Share'}</span>
+        {status === 'connected' && <span className="sb-live-count">{count + 1}</span>}
       </button>
       <button
         className={`sb-island sb-icon-btn sb-sidebar-toggle ${sidebarOpen ? 'is-active' : ''}`}

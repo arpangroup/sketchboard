@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { Fragment, memo, useEffect, useRef, useState } from 'react';
 import { activeSections, pageRects } from '../../page/pageLayout';
 import { addSection } from '../../page/sections';
 import { PAGE_SIZES } from '../../page/pageSizes';
@@ -67,8 +67,27 @@ export function PagesPanel() {
         </button>
       </div>
       <div className="sb-pages__list" ref={listRef}>
+        <InsertSlot at={0} count={count} />
         {Array.from({ length: count }, (_, i) => (
-          <PageThumb key={i} index={i} active={i === current} revision={revision} section={starts.get(i)} onSelect={() => go(i)} />
+          <Fragment key={i}>
+            <div className="sb-thumb-wrap">
+              <PageThumb index={i} active={i === current} revision={revision} section={starts.get(i)} onSelect={() => go(i)} />
+              <div className="sb-thumb__tools" role="group" aria-label={`Page ${i + 1} actions`}>
+                <button className="sb-icon-btn" onClick={() => editor.insertPageAt(i)} aria-label={`Insert a blank page above page ${i + 1}`} title="Insert blank page above">
+                  <Icons.pageAbove />
+                </button>
+                <button className="sb-icon-btn" onClick={() => editor.insertPageAt(i + 1)} aria-label={`Insert a blank page below page ${i + 1}`} title="Insert blank page below">
+                  <Icons.pageBelow />
+                </button>
+                {count > 1 && (
+                  <button className="sb-icon-btn is-danger" onClick={() => editor.deletePageAt(i)} aria-label={`Delete page ${i + 1}`} title="Delete page (Ctrl+Z to undo)">
+                    <Icons.trash />
+                  </button>
+                )}
+              </div>
+            </div>
+            <InsertSlot at={i + 1} count={count} />
+          </Fragment>
         ))}
       </div>
       <div className="sb-pages__foot">
@@ -84,18 +103,25 @@ export function PagesPanel() {
           >
             + Section
           </button>
-          <button
-            className="sb-btn sb-btn--sm"
-            onClick={() => {
-              editor.setState({ pageSetup: { ...setup, pageCount: count + 1 } });
-              requestAnimationFrame(() => editor.goToPage(count));
-            }}
-          >
-            + Add page
+          <button className="sb-btn sb-btn--sm" onClick={() => editor.insertPageAt(current + 1)} title={`Insert a blank page after page ${current + 1}`}>
+            + Page
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+/** Hover gap between thumbnails: insert a blank page right there. */
+function InsertSlot({ at, count }: { at: number; count: number }) {
+  const { editor } = useEditor();
+  const where = at === 0 ? 'before page 1' : at === count ? `after page ${count}` : `between pages ${at} and ${at + 1}`;
+  return (
+    <button className="sb-insert-slot" onClick={() => editor.insertPageAt(at)} aria-label={`Insert a blank page ${where}`} title={`Insert a blank page ${where}`}>
+      <span className="sb-insert-slot__pill">
+        <Icons.plus /> Insert page
+      </span>
+    </button>
   );
 }
 

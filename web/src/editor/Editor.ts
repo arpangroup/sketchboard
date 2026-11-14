@@ -41,6 +41,7 @@ import {
 import { exportToPngBlob } from '../export/pngExport';
 import { exportToSvg } from '../export/svgExport';
 import { drawLinkBadges, linkBadges } from '../renderer/linkBadge';
+import { deletePage, insertPage, type PageEdit } from '../page/pageEdit';
 import { pointsToElementGeometry } from '../elements/handlers/pointShapes';
 import { canHoldLabel, labelNeedsLayout, labelOf, layoutLabel, withLabels } from '../elements/boundText';
 import { anchorFor, arrowsBoundTo, BIND_DISTANCE, bindableAt, boundArrowGeometry } from '../elements/binding';
@@ -62,7 +63,7 @@ import { getElementBounds, hitTestElement } from '../elements/registry';
 import { measureText } from '../elements/textMetrics';
 import { contentBounds } from '../export/region';
 import { getPageBounds } from '../page/pageSizes';
-import { type PageDecoration, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
+import { MAX_PAGES, type PageDecoration, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
 import { LocalStorageAdapter, type StorageAdapter } from '../persistence/StorageAdapter';
 import { parseScene, serializeScene } from '../persistence/serialization';
 import { fromExcalidraw } from '../persistence/excalidraw';
@@ -304,6 +305,48 @@ export class Editor implements ToolContext {
   private pageCache: { rev: number; setup: unknown; count: number; deco: PageDecoration[]; day: string } | null = null;
 
   /** Pages in the document: grows automatically with content below the last page. */
+  /** Inserts a blank page at position `at` (0 = top, page count = bottom) and shows it. */
+  insertPageAt(at: number): void {
+    const count = this.getPageCount();
+    const edit = insertPage(this.getState().pageSetup, count, this.scene.getElements(), at);
+    if (!edit) return this.toast(count >= MAX_PAGES ? `A document can have up to ${MAX_PAGES} pages` : 'Pick a paper size to use pages');
+    this.applyPageEdit(edit);
+    const index = Math.max(0, Math.min(count, Math.round(at)));
+    requestAnimationFrame(() => this.goToPage(index));
+    this.toast(`Blank page inserted as page ${index + 1}`);
+  }
+
+  /** Deletes page `index` (0-based) with everything on it; later pages move up. Undo brings the content back. */
+  deletePageAt(index: number): void {
+    const edit = deletePage(this.getState().pageSetup, this.getPageCount(), this.scene.getElements(), index);
+    if (!edit) return this.toast('A document needs at least one page');
+    this.applyPageEdit(edit);
+    requestAnimationFrame(() => this.goToPage(Math.min(index, this.getPageCount() - 1)));
+    this.toast(edit.deletes.length ? `Page ${index + 1} deleted — Ctrl+Z brings its content back` : `Page ${index + 1} deleted`);
+  }
+
+  /** Page the last right-click / pointer was on, else the page in view (for menu commands). */
+  pageForCommand(): number {
+    const rects = pageRects(this.getState().pageSetup, this.getPageCount());
+    const p = this.lastPointer;
+    const hit = p ? rects.findIndex((r) => p.x >= r.x - 40 && p.x <= r.x + r.width + 40 && p.y >= r.y && p.y <= r.y + r.height) : -1;
+    return hit >= 0 ? hit : this.currentPageIndex();
+  }
+
+  private applyPageEdit(edit: PageEdit): void {
+    const updates: SketchElement[] = [];
+    const deleted = new Set(edit.deletes);
+    for (const el of this.scene.getElements()) {
+      if (deleted.has(el.id)) updates.push(updateElement(el, { isDeleted: true }));
+      else if (edit.moves.has(el.id)) updates.push(updateElement(el, edit.moves.get(el.id)!));
+    }
+    // page count first, so the new page exists before content moves onto the pages below it
+    this.setState({ pageSetup: edit.setup });
+    if (updates.length) this.scene.upsert(updates);
+    if (deleted.size) this.setSelection(Object.keys(this.getState().selectedIds).filter((id) => !deleted.has(id)));
+    this.commitHistory();
+  }
+
   getPageCount(): number {
     return this.pageLayout().count;
   }

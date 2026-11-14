@@ -298,6 +298,24 @@ export const ACTIONS: Action[] = [
     enabled: hasSelection,
   },
   {
+    id: 'insertPageAbove',
+    label: 'Insert blank page above',
+    perform: (ed) => ed.insertPageAt(ed.pageForCommand()),
+    enabled: (ed) => ed.getState().pageSetup.size !== 'infinite',
+  },
+  {
+    id: 'insertPageBelow',
+    label: 'Insert blank page below',
+    perform: (ed) => ed.insertPageAt(ed.pageForCommand() + 1),
+    enabled: (ed) => ed.getState().pageSetup.size !== 'infinite',
+  },
+  {
+    id: 'deletePage',
+    label: 'Delete this page',
+    perform: (ed) => ed.deletePageAt(ed.pageForCommand()),
+    enabled: (ed) => ed.getState().pageSetup.size !== 'infinite' && ed.getPageCount() > 1,
+  },
+  {
     id: 'straighten',
     label: 'Straighten line (remove bends)',
     perform: (ed) => ed.straightenSelected(),

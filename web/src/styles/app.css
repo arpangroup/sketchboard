@@ -786,6 +786,29 @@ kbd {
   background: var(--sb-accent-soft);
   color: var(--sb-accent);
 }
+.sb-share-btn {
+  position: relative;
+  width: 40px;
+  height: 38px;
+}
+.sb-share-btn.is-live {
+  color: var(--sb-accent);
+}
+.sb-live-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--sb-success, #2f9e44);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+}
 .sb-sidebar-toggle {
   position: relative;
   width: 40px;
@@ -1606,8 +1629,106 @@ button:focus:not(:focus-visible) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 0;
   padding: 6px 0 12px;
+}
+/* page thumbnail + its hover tools */
+.sb-thumb-wrap {
+  position: relative;
+  flex: none;
+}
+.sb-thumb__tools {
+  position: absolute;
+  top: 10px;
+  right: -2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--sb-island-border);
+  border-radius: 9px;
+  background: var(--sb-island);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.sb-thumb__tools .sb-icon-btn {
+  width: 28px;
+  height: 28px;
+}
+.sb-thumb__tools .sb-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.sb-thumb__tools .is-danger:hover {
+  color: var(--sb-danger);
+}
+.sb-thumb-wrap:hover .sb-thumb__tools,
+.sb-thumb__tools:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  /* touch: tools always shown on the page in view */
+  .sb-thumb-wrap:has(.sb-thumb.is-active) .sb-thumb__tools {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+/* gap between thumbnails: hover to insert a page there */
+.sb-insert-slot {
+  position: relative;
+  flex: none;
+  width: 100%;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.sb-insert-slot::before {
+  content: '';
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 50%;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--sb-accent);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.sb-insert-slot__pill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px 2px 6px;
+  border-radius: 999px;
+  background: var(--sb-accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.sb-insert-slot__pill svg {
+  width: 13px;
+  height: 13px;
+}
+.sb-insert-slot:hover::before,
+.sb-insert-slot:hover .sb-insert-slot__pill,
+.sb-insert-slot:focus-visible::before,
+.sb-insert-slot:focus-visible .sb-insert-slot__pill {
+  opacity: 1;
+}
+.sb-insert-slot:focus-visible {
+  outline: none;
 }
 .sb-thumb {
   position: relative;

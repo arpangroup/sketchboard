@@ -492,6 +492,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['Nudge', 'Arrow keys (Shift = 10px)'],
     ['Edit text', 'Double-click or Enter'],
     ['Connect shapes (arrow follows them)', 'Draw an arrow from one shape to another · hold Ctrl to keep it free'],
+    ['Insert or delete a page', 'Pages panel: hover between two pages, or hover a page for its buttons · or right-click the page'],
     ['Curve a line or arrow', 'Select it and drag the dot in the middle of a segment'],
     ['Remove a bend', 'Double-click the bend point (or right-click → Straighten)'],
     ['Label a shape (centred text inside it)', 'Double-click the shape, or select it and press Enter'],

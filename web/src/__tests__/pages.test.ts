@@ -5,6 +5,7 @@ import { createShape } from '../elements/factory';
 import { buildPrintSvg } from '../export/printService';
 import { activeSections, expandTokens, pageDecorations, pageRects, requiredPageCount, sectionOfPage } from '../page/pageLayout';
 import { addSection, removeSection, setOwnArea, updateSection } from '../page/sections';
+import { deletePage, insertPage, pageIsEmpty, pageStride } from '../page/pageEdit';
 import { getPageDimensions, getPrintableBounds, MM_TO_PX, resolveMargins } from '../page/pageSizes';
 
 const setup: PageSetup = {
@@ -127,5 +128,39 @@ describe('sections', () => {
     expect(doc.pages[0]).toContain('Handbook');
     expect(doc.pages[1]).toContain('B: Part B');
     expect(doc.pages[1]).not.toContain('Handbook');
+  });
+});
+
+describe('inserting and deleting pages', () => {
+  const setup: PageSetup = { size: 'A4', orientation: 'portrait', marginMm: 10, pageCount: 3 };
+  const stride = pageStride(setup)!;
+  const on = (page: number, z: number) => ({ ...rect(page * stride + 100), zIndex: z, id: `p${page}-${z}` });
+  const els = [on(0, 1), on(1, 2), on(2, 3)];
+
+  it('inserts a blank page and moves everything from there down one page', () => {
+    const edit = insertPage(setup, 3, els, 1)!;
+    expect(edit.setup.pageCount).toBe(4);
+    expect(edit.moves.has('p0-1')).toBe(false);
+    expect(edit.moves.get('p1-2')!.y).toBe(els[1].y + stride);
+    expect(edit.moves.get('p2-3')!.y).toBe(els[2].y + stride);
+    expect(insertPage(setup, 3, els, 0)!.moves.size).toBe(3); // at the top: everything moves
+    expect(insertPage(setup, 3, els, 3)!.moves.size).toBe(0); // at the bottom: nothing moves
+    expect(insertPage({ ...setup, size: 'infinite' }, 0, els, 0)).toBeNull();
+  });
+
+  it('keeps sections on the same pages', () => {
+    const withSec = { ...setup, sections: [{ id: 's', startPage: 2 }, { id: 't', startPage: 3 }] };
+    expect(insertPage(withSec, 3, els, 2)!.setup.sections!.map((s) => s.startPage)).toEqual([2, 4]);
+    expect(deletePage(withSec, 3, els, 0)!.setup.sections!.map((s) => s.startPage)).toEqual([1, 2]);
+  });
+
+  it('deletes a page with its content and moves later pages up', () => {
+    const edit = deletePage(setup, 3, els, 1)!;
+    expect(edit.deletes).toEqual(['p1-2']);
+    expect(edit.moves.get('p2-3')!.y).toBe(els[2].y - stride);
+    expect(edit.setup.pageCount).toBe(2);
+    expect(deletePage(setup, 1, els, 0)).toBeNull(); // the last page stays
+    expect(pageIsEmpty(setup, els, 1)).toBe(false);
+    expect(pageIsEmpty(setup, els, 5)).toBe(true);
   });
 });
