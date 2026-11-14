@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { pageRects } from '../../page/pageLayout';
+import { activeSections, pageRects } from '../../page/pageLayout';
+import { addSection } from '../../page/sections';
 import { PAGE_SIZES } from '../../page/pageSizes';
 import { drawPageThumbnail } from '../../page/pageThumbnail';
 import { useAppState, useEditor, useSceneRevision } from '../EditorContext';
@@ -44,6 +45,13 @@ export function PagesPanel() {
   }
 
   const go = (i: number) => editor.goToPage(Math.max(0, Math.min(count - 1, i)));
+  const starts = new Map(activeSections(setup, count).map((sec) => [sec.startPage - 1, sec.title?.trim() || 'Section']));
+  const sectionHere = setup.sections?.some((sec) => sec.startPage === current + 1);
+  const newSection = () => {
+    editor.setState({ pageSetup: addSection(setup, current + 1).setup, openDialog: 'page' });
+    // bring the new section's card into view in Page setup
+    requestAnimationFrame(() => document.querySelector('.sb-sections')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  };
 
   return (
     <div className="sb-pages">
@@ -60,22 +68,32 @@ export function PagesPanel() {
       </div>
       <div className="sb-pages__list" ref={listRef}>
         {Array.from({ length: count }, (_, i) => (
-          <PageThumb key={i} index={i} active={i === current} revision={revision} onSelect={() => go(i)} />
+          <PageThumb key={i} index={i} active={i === current} revision={revision} section={starts.get(i)} onSelect={() => go(i)} />
         ))}
       </div>
       <div className="sb-pages__foot">
         <span className="sb-muted">
           {PAGE_SIZES[setup.size as keyof typeof PAGE_SIZES]?.label} · {setup.orientation}
         </span>
-        <button
-          className="sb-btn sb-btn--sm"
-          onClick={() => {
-            editor.setState({ pageSetup: { ...setup, pageCount: count + 1 } });
-            requestAnimationFrame(() => editor.goToPage(count));
-          }}
-        >
-          + Add page
-        </button>
+        <div className="sb-pages__actions">
+          <button
+            className="sb-btn sb-btn--sm"
+            onClick={newSection}
+            disabled={sectionHere}
+            title={sectionHere ? 'A section already starts on this page' : `Start a section (own title / footer) on page ${current + 1}`}
+          >
+            + Section
+          </button>
+          <button
+            className="sb-btn sb-btn--sm"
+            onClick={() => {
+              editor.setState({ pageSetup: { ...setup, pageCount: count + 1 } });
+              requestAnimationFrame(() => editor.goToPage(count));
+            }}
+          >
+            + Add page
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -108,7 +126,7 @@ function PageInput({ value, max, onCommit }: { value: number; max: number; onCom
   );
 }
 
-const PageThumb = memo(function PageThumb(p: { index: number; active: boolean; revision: number; onSelect: () => void }) {
+const PageThumb = memo(function PageThumb(p: { index: number; active: boolean; revision: number; section?: string; onSelect: () => void }) {
   const { editor } = useEditor();
   const setup = useAppState((s) => s.pageSetup);
   const colorMode = useAppState((s) => s.viewColorMode);
@@ -152,6 +170,11 @@ const PageThumb = memo(function PageThumb(p: { index: number; active: boolean; r
       aria-label={`Go to page ${p.index + 1}`}
       aria-current={p.active ? 'page' : undefined}
     >
+      {p.section && (
+        <span className="sb-thumb__section" title={`Section “${p.section}” starts here`}>
+          {p.section}
+        </span>
+      )}
       <canvas ref={ref} className="sb-thumb__canvas" style={{ aspectRatio: ratio, width: THUMB_WIDTH }} />
       <span className="sb-thumb__num">{p.index + 1}</span>
     </button>

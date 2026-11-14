@@ -5,9 +5,12 @@ import type {
   PageNumberFormat,
   PageNumberPosition,
   PageMargins,
+  PageSection,
   PageSetup,
 } from '../../../core/types';
-import { MAX_PAGES, PAGE_NUMBER_FORMAT_OPTIONS, requiredPageCount } from '../../../page/pageLayout';
+import { MAX_PAGES, PAGE_NUMBER_FORMAT_OPTIONS, requiredPageCount, sectionOfPage } from '../../../page/pageLayout';
+import { addSection, removeSection, setOwnArea, updateSection } from '../../../page/sections';
+import { Icons } from '../../icons/Icons';
 import { getPageDimensions, isUniformMargins, MAX_MARGIN_MM, MM_TO_PX, PAGE_SIZE_OPTIONS, type PageDimensions, resolveMargins } from '../../../page/pageSizes';
 import { useAppState, useEditor, useSceneRevision } from '../../EditorContext';
 import { Field, Modal, Segmented } from './Modal';
@@ -187,36 +190,52 @@ function PagesField() {
 const SLOTS: HeaderFooterSlot[] = ['left', 'center', 'right'];
 const EMPTY_HF: HeaderFooterText = { left: '', center: '', right: '' };
 
-/** Header, footer and page numbering - printed on every page. */
+/** Three slot inputs (left / centre / right) for a header or footer. */
+function HfInputs(p: {
+  area: 'header' | 'footer';
+  values: HeaderFooterText;
+  pn: NonNullable<PageSetup['pageNumbers']>;
+  onChange: (v: HeaderFooterText) => void;
+  labelPrefix?: string;
+}) {
+  return (
+    <div className="sb-hf-row">
+      {SLOTS.map((slot) => {
+        const numbered = p.pn.enabled && p.pn.position === `${p.area}-${slot}`;
+        return (
+          <input
+            key={slot}
+            className={`sb-input sb-hf-input sb-hf-input--${slot}`}
+            placeholder={numbered ? `${slot} · page number` : slot[0].toUpperCase() + slot.slice(1)}
+            value={p.values[slot]}
+            onChange={(e) => p.onChange({ ...p.values, [slot]: e.target.value.slice(0, 120) })}
+            aria-label={`${p.labelPrefix ?? ''}${p.area} ${slot}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+const DEFAULT_PN = { enabled: false, position: 'footer-center' as PageNumberPosition, format: 'page-n-of-m' as PageNumberFormat };
+
+/** Header, footer and page numbering - the default for every page, plus optional per-section overrides. */
 function HeaderFooterFields({ setup, update }: { setup: PageSetup; update: (p: Partial<PageSetup>) => void }) {
-  const pn = setup.pageNumbers ?? { enabled: false, position: 'footer-center' as PageNumberPosition, format: 'page-n-of-m' as PageNumberFormat };
+  const pn = setup.pageNumbers ?? DEFAULT_PN;
   const setPn = (patch: Partial<typeof pn>) => update({ pageNumbers: { ...pn, ...patch } });
-  const row = (area: 'header' | 'footer') => {
-    const values = setup[area] ?? EMPTY_HF;
-    return (
-      <Field label={area === 'header' ? 'Header' : 'Footer'}>
-        <div className="sb-hf-row">
-          {SLOTS.map((slot) => {
-            const numbered = pn.enabled && pn.position === `${area}-${slot}`;
-            return (
-              <input
-                key={slot}
-                className={`sb-input sb-hf-input sb-hf-input--${slot}`}
-                placeholder={numbered ? `${slot} · page number` : slot[0].toUpperCase() + slot.slice(1)}
-                value={values[slot]}
-                onChange={(e) => update({ [area]: { ...values, [slot]: e.target.value.slice(0, 120) } })}
-                aria-label={`${area} ${slot}`}
-              />
-            );
-          })}
-        </div>
-      </Field>
-    );
-  };
+  const hasSections = (setup.sections?.length ?? 0) > 0;
+  const row = (area: 'header' | 'footer') => (
+    <Field
+      label={`${hasSections ? 'Default ' : ''}${area === 'header' ? 'header' : 'footer'}`.replace(/^./, (c) => c.toUpperCase())}
+      hint={hasSections && area === 'footer' ? 'Used on every page that isn’t in a section with its own.' : undefined}
+    >
+      <HfInputs area={area} values={setup[area] ?? EMPTY_HF} pn={pn} onChange={(v) => update({ [area]: v })} />
+    </Field>
+  );
   return (
     <section className="sb-hf">
       <h3 className="sb-hf__title">Header, footer &amp; page numbers</h3>
-      <Field label="Document title" hint="Use {title}, {page}, {pages} and {date} in any header or footer.">
+      <Field label="Document title" hint="Use {title}, {section}, {page}, {pages} and {date} in any header or footer.">
         <input
           className="sb-input"
           placeholder="Untitled"
@@ -254,7 +273,118 @@ function HeaderFooterFields({ setup, update }: { setup: PageSetup; update: (p: P
           />
         </div>
       </Field>
+      <SectionsField setup={setup} pn={pn} />
     </section>
+  );
+}
+
+/** Sections: runs of pages with their own title, header and footer (like section breaks in a word processor). */
+function SectionsField({ setup, pn }: { setup: PageSetup; pn: NonNullable<PageSetup['pageNumbers']> }) {
+  const { editor } = useEditor();
+  useSceneRevision();
+  const count = editor.getPageCount();
+  const sections = setup.sections ?? [];
+  const set = (next: PageSetup) => editor.setState({ pageSetup: next });
+  const add = () => {
+    const last = sections[sections.length - 1];
+    const here = editor.currentPageIndex() + 1;
+    const start = here > 1 && !sections.some((s) => s.startPage === here) ? here : last ? last.startPage + 1 : Math.min(2, count);
+    set(addSection(setup, start).setup);
+  };
+
+  return (
+    <div className="sb-sections">
+      <div className="sb-sections__head">
+        <div>
+          <h4 className="sb-sections__title">Sections</h4>
+          <p className="sb-muted">
+            Give a range of pages its own title, footer or header. A section runs from its first page up to the next section.
+          </p>
+        </div>
+        <button className="sb-btn sb-btn--sm" onClick={add} disabled={sections.length >= MAX_PAGES}>
+          + Add section
+        </button>
+      </div>
+      {sections.length > 0 && (
+        <p className="sb-sections__default sb-muted">
+          {sections[0].startPage > 1
+            ? <>Pages 1–{Math.min(count, sections[0].startPage - 1)} use the default header and footer.</>
+            : <>Every page is in a section.</>}
+        </p>
+      )}
+      {sections.map((sec) => {
+        const { first, last } = sectionOfPage(setup, Math.min(sec.startPage, count), count);
+        const beyond = sec.startPage > count;
+        const shadowed = !beyond && sectionOfPage(setup, sec.startPage, count).section?.id !== sec.id;
+        const patch = (p: Partial<PageSection>) => set(updateSection(setup, sec.id, p));
+        return (
+          <div key={sec.id} className="sb-section-card" data-section={sec.id}>
+            <div className="sb-section-card__head">
+              <strong>{sec.title?.trim() || 'Untitled section'}</strong>
+              <span className="sb-muted">
+                {beyond
+                  ? `starts on page ${sec.startPage} — the document has ${count}`
+                  : shadowed
+                    ? 'another section starts on the same page'
+                    : first === last
+                      ? `page ${first}`
+                      : `pages ${first}–${last}`}
+              </span>
+              <button className="sb-icon-btn" onClick={() => set(removeSection(setup, sec.id))} aria-label={`Remove ${sec.title || 'section'}`} title="Remove section">
+                <Icons.trash />
+              </button>
+            </div>
+            <div className="sb-section-card__row">
+              <label className="sb-section-card__start">
+                <span>Starts on page</span>
+                <input
+                  className="sb-input"
+                  type="number"
+                  min={1}
+                  max={MAX_PAGES}
+                  value={sec.startPage}
+                  onChange={(e) => {
+                    const v = Math.round(Number(e.target.value));
+                    if (Number.isFinite(v) && v >= 1) patch({ startPage: Math.min(MAX_PAGES, v) });
+                  }}
+                  aria-label="Section start page"
+                />
+              </label>
+              <label className="sb-section-card__name">
+                <span>Section title</span>
+                <input
+                  className="sb-input"
+                  placeholder={setup.title?.trim() || 'Untitled'}
+                  value={sec.title ?? ''}
+                  onChange={(e) => patch({ title: e.target.value.slice(0, 120) })}
+                  aria-label="Section title"
+                />
+              </label>
+              <label className="sb-switch" title="Number this section’s pages from 1">
+                <input type="checkbox" checked={!!sec.restartNumbering} onChange={(e) => patch({ restartNumbering: e.target.checked })} />
+                <span>Restart numbering</span>
+              </label>
+            </div>
+            {(['footer', 'header'] as const).map((area) => {
+              const own = !!sec[area];
+              return (
+                <div key={area} className="sb-section-card__area">
+                  <label className="sb-switch">
+                    <input type="checkbox" checked={own} onChange={(e) => set(setOwnArea(setup, sec.id, area, e.target.checked))} />
+                    <span>Own {area}</span>
+                  </label>
+                  {own ? (
+                    <HfInputs area={area} values={sec[area]!} pn={pn} labelPrefix="section " onChange={(v) => patch({ [area]: v })} />
+                  ) : (
+                    <span className="sb-muted">Same as the default {area}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

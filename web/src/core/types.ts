@@ -270,6 +270,24 @@ export type PageNumberFormat = 'n' | 'page-n' | 'page-n-of-m' | 'n-of-m';
 /** Text for the three slots of a header or footer. Supports {page} {pages} {date} {title}. */
 export type HeaderFooterText = Record<HeaderFooterSlot, string>;
 
+/**
+ * A run of pages with its own header/footer (like a section break in a word processor).
+ * It starts at `startPage` and runs until the next section starts; pages before the first
+ * section use the document's default header and footer.
+ */
+export interface PageSection {
+  id: string;
+  /** 1-based page this section starts on. */
+  startPage: number;
+  /** Section title, available as {section} and used for {title} (falls back to the document title). */
+  title?: string;
+  /** Own header / footer for this section; undefined = same as the document default. */
+  header?: HeaderFooterText;
+  footer?: HeaderFooterText;
+  /** Start page numbers again at 1: {page} and {pages} count within this section. */
+  restartNumbering?: boolean;
+}
+
 export interface PageSetup {
   size: PageSizeId;
   orientation: Orientation;
@@ -284,6 +302,8 @@ export interface PageSetup {
   header?: HeaderFooterText;
   footer?: HeaderFooterText;
   pageNumbers?: { enabled: boolean; position: PageNumberPosition; format: PageNumberFormat };
+  /** Sections with their own header/footer; the header/footer above is the default for every other page. */
+  sections?: PageSection[];
 }
 
 export type ColorMode = 'color' | 'grayscale' | 'blackwhite';

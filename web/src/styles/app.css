@@ -1475,6 +1475,93 @@ button:focus:not(:focus-visible) {
   }
 }
 
+/* sections (Page setup) */
+.sb-sections {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--sb-island-border);
+  display: grid;
+  gap: 10px;
+}
+.sb-sections__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sb-sections__head p {
+  margin: 2px 0 0;
+}
+.sb-sections__title {
+  margin: 0;
+  font-size: 13px;
+}
+.sb-sections__head .sb-btn {
+  flex: none;
+}
+.sb-sections__default {
+  margin: 0;
+}
+.sb-section-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--sb-island-border);
+  border-left: 3px solid var(--sb-accent);
+  border-radius: 10px;
+  background: var(--sb-hover);
+}
+.sb-section-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sb-section-card__head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-section-card__head .sb-muted {
+  flex: 1;
+  font-size: 12px;
+}
+.sb-section-card__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sb-section-card__row label:not(.sb-switch) {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--sb-muted);
+}
+.sb-section-card__start input {
+  width: 80px;
+}
+.sb-section-card__name {
+  flex: 1;
+  min-width: 160px;
+}
+.sb-section-card__row .sb-switch {
+  padding-bottom: 8px;
+  font-size: 13px;
+}
+.sb-section-card__area {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  .sb-section-card__area {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ─── pages panel (PDF-viewer style) ─── */
 .sb-pages {
   display: flex;
@@ -1547,6 +1634,22 @@ button:focus:not(:focus-visible) {
   background: #fff;
   border-radius: 2px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+.sb-thumb__section {
+  max-width: 100%;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--sb-accent-soft);
+  color: var(--sb-accent);
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-pages__actions {
+  display: flex;
+  gap: 6px;
 }
 .sb-thumb__num {
   font-size: 12px;

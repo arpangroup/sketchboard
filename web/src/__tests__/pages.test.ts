@@ -3,7 +3,8 @@ import { DEFAULT_STYLE } from '../core/constants';
 import type { PageSetup } from '../core/types';
 import { createShape } from '../elements/factory';
 import { buildPrintSvg } from '../export/printService';
-import { expandTokens, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
+import { activeSections, expandTokens, pageDecorations, pageRects, requiredPageCount, sectionOfPage } from '../page/pageLayout';
+import { addSection, removeSection, setOwnArea, updateSection } from '../page/sections';
 import { getPageDimensions, getPrintableBounds, MM_TO_PX, resolveMargins } from '../page/pageSizes';
 
 const setup: PageSetup = {
@@ -64,5 +65,67 @@ describe('per-side margins', () => {
     expect(resolveMargins({ marginMm: 10, margins: { top: -5, right: Number.NaN, bottom: 500, left: 12 } })).toEqual({ top: 0, right: 10, bottom: 100, left: 12 });
     const d = getPageDimensions({ size: 'A5', orientation: 'portrait', marginMm: 0, margins: { top: 0, right: 100, bottom: 0, left: 100 } })!;
     expect((d.widthPx - d.margins.left - d.margins.right) / MM_TO_PX).toBeCloseTo(20, 3); // 20 mm always left to draw in
+  });
+});
+
+describe('sections', () => {
+  const base: PageSetup = {
+    size: 'A4',
+    orientation: 'portrait',
+    marginMm: 10,
+    title: 'Handbook',
+    footer: { left: '{title}', center: '', right: '' },
+    pageNumbers: { enabled: true, position: 'footer-right', format: 'page-n-of-m' },
+  };
+  const at = (deco: ReturnType<typeof pageDecorations>, page: number) => deco.filter((d) => d.page === page).map((d) => d.text);
+
+  it('uses the default footer everywhere until a section starts', () => {
+    const deco = pageDecorations(base, 2, { date: 'd' });
+    expect(at(deco, 2)).toEqual(['Handbook', 'Page 2 of 2']);
+  });
+
+  it('gives a page range its own title and footer, linked header and default before it', () => {
+    let s = addSection(base, 3).setup;
+    const id = s.sections![0].id;
+    s = updateSection(s, id, { title: 'Appendix', footer: { left: '{section} · draft', center: '', right: '' } });
+    const deco = pageDecorations(s, 5, { date: 'd' });
+    expect(at(deco, 2)).toEqual(['Handbook', 'Page 2 of 5']);
+    expect(at(deco, 3)).toEqual(['Appendix · draft', 'Page 3 of 5']);
+    expect(at(deco, 5)).toEqual(['Appendix · draft', 'Page 5 of 5']);
+    expect(sectionOfPage(s, 4, 5)).toMatchObject({ first: 3, last: 5 });
+
+    // restart numbering counts within the section; {title} becomes the section title
+    s = updateSection(s, id, { restartNumbering: true, footer: { left: '{title}', center: '', right: '' } });
+    expect(at(pageDecorations(s, 5, { date: 'd' }), 4)).toEqual(['Appendix', 'Page 2 of 3']);
+
+    // a second section ends the first; linking the footer back uses the default again
+    s = addSection(s, 5).setup;
+    const second = s.sections!.find((x) => x.startPage === 5)!;
+    s = setOwnArea(s, second.id, 'footer', false);
+    expect(sectionOfPage(s, 4, 5)).toMatchObject({ first: 3, last: 4 });
+    expect(at(pageDecorations(s, 5, { date: 'd' }), 5)[0]).toBe(second.title);
+
+    // sections past the last page are ignored; removing them all leaves the default
+    expect(activeSections({ ...s, sections: [{ id: 'x', startPage: 9 }] }, 5)).toEqual([]);
+    s = removeSection(removeSection(s, id), second.id);
+    expect(s.sections).toBeUndefined();
+  });
+
+  it('new sections start on a free page with a copy of the default footer', () => {
+    const one = addSection(base, 2).setup;
+    const two = addSection(one, 2);
+    expect(two.section.startPage).toBe(3);
+    expect(two.section.footer).toEqual(base.footer);
+    expect(two.section.header).toBeUndefined();
+  });
+
+  it('prints each section’s footer on its own pages', () => {
+    const s = updateSection(addSection(base, 2).setup, addSection(base, 2).section.id, {});
+    const withTitle = { ...s, sections: s.sections!.map((x) => ({ ...x, title: 'Part B', footer: { left: 'B: {section}', center: '', right: '' } })) };
+    const h = pageRects(withTitle, 2)[1].y;
+    const doc = buildPrintSvg({ elements: [rect(100), rect(h + 50)], pageSetup: withTitle, colorMode: 'blackwhite', scope: 'page' });
+    expect(doc.pages[0]).toContain('Handbook');
+    expect(doc.pages[1]).toContain('B: Part B');
+    expect(doc.pages[1]).not.toContain('Handbook');
   });
 });
