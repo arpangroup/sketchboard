@@ -93,6 +93,10 @@ To try a sub-folder build locally: `VITE_NO_SERVER=true npm run build -- --base=
 
 Press `?` in the app for the full list.
 
+**Connected arrows.** Draw an arrow from one shape to another and its ends attach: move, resize or rotate
+either shape and the arrow follows. Hold `Ctrl` while drawing to keep the ends free. See
+**[docs/ARROW_BINDING.md](docs/ARROW_BINDING.md)** for how it works.
+
 ### Printing in black & white
 Click **Print** (top right) → choose paper, orientation, *Page as drawn* or *Fit drawing to page*, and **Black & white**.
 In B/W every stroke and text becomes black; fills are graded so text stays readable — near-white tints print as plain paper,
@@ -120,7 +124,8 @@ sketchboard/
 │       ├── editor/          Editor facade/mediator tying it all together
 │       └── ui/              React components (toolbar, properties, dialogs…)
 ├── collab-server/           Node server: WebSocket relay (zero-knowledge) + workspace REST API (src/storage)
-└── docs/ARCHITECTURE.md     HLD, LLD, UML, data model, APIs, patterns, trade-offs, scaling
+├── docs/ARCHITECTURE.md     HLD, LLD, UML, data model, APIs, patterns, trade-offs, scaling
+└── docs/ARROW_BINDING.md    connected arrows: how to use them and how they work
 ```
 
 See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design.
