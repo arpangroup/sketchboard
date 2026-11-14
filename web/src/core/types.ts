@@ -435,7 +435,7 @@ export interface LibraryItem {
   category?: string;
 }
 
-export type DialogId = 'export' | 'print' | 'page' | 'collab' | 'help' | 'install' | 'workspace' | 'link' | 'hyperlink';
+export type DialogId = 'export' | 'print' | 'page' | 'collab' | 'help' | 'install' | 'workspace' | 'link' | 'hyperlink' | 'clearCanvas';
 
 /** Serialisable document format (.sketchboard files & local storage). */
 export interface SceneData {

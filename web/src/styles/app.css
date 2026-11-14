@@ -2524,3 +2524,17 @@ a.sb-dropdown__item {
   margin-top: 8px;
   flex-wrap: wrap;
 }
+
+.sb-confirm__text {
+  margin: 0 0 4px;
+  max-width: 44ch;
+  line-height: 1.5;
+}
+.sb-btn--danger-fill {
+  background: var(--sb-danger);
+  border-color: var(--sb-danger);
+  color: #fff;
+}
+.sb-btn--danger-fill:hover {
+  filter: brightness(0.93);
+}

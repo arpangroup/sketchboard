@@ -449,10 +449,8 @@ export const ACTIONS: Action[] = [
   {
     id: 'clearCanvas',
     label: 'Clear canvas',
-    perform: (ed) => {
-      ed.clearCanvas();
-      ed.toast('Canvas cleared — press Ctrl+Z to undo');
-    },
+    // asks first (ClearCanvasDialog), then calls editor.clearCanvas()
+    perform: (ed) => (ed.scene.getElements().length ? ed.setState({ openDialog: 'clearCanvas' }) : ed.toast('The canvas is already empty')),
   },
   dialogAction('export', 'Export image…', 'Ctrl+Shift+E', (e) => mod(e) && e.shiftKey && key(e, 'e')),
   dialogAction('print', 'Print…', 'Ctrl+P', (e) => mod(e) && key(e, 'p')),

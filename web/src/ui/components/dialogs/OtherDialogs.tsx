@@ -578,3 +578,31 @@ export function HyperlinkDialog({ onClose }: { onClose: () => void }) {
     </Modal>
   );
 }
+
+/** "Clear canvas?" — the board is only wiped after this is confirmed. */
+export function ClearCanvasDialog({ onClose }: { onClose: () => void }) {
+  const { editor } = useEditor();
+  const count = editor.scene.getElements().length;
+  const live = useAppState((s) => s.collab.status) === 'connected';
+  const clear = () => {
+    editor.clearCanvas();
+    editor.toast('Canvas cleared — press Ctrl+Z to undo');
+    onClose();
+  };
+  return (
+    <Modal title="Clear canvas?" onClose={onClose}>
+      <p className="sb-confirm__text">
+        This deletes everything on the board ({count} {count === 1 ? 'element' : 'elements'}).
+        {live && ' It also clears the board for everyone in this live session.'} You can undo it with Ctrl+Z.
+      </p>
+      <div className="sb-modal__actions">
+        <button className="sb-btn" onClick={onClose} autoFocus>
+          Cancel
+        </button>
+        <button className="sb-btn sb-btn--danger-fill" onClick={clear}>
+          Clear canvas
+        </button>
+      </div>
+    </Modal>
+  );
+}
