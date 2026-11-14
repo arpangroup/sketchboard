@@ -372,6 +372,43 @@ export const Icons = {
       <path d="M12 8.5v7M8.5 12h7" />
     </Svg>
   ),
+  group: () => (
+    <Svg>
+      <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="3 3" />
+      <rect x="7" y="7" width="5" height="5" rx="1" />
+      <rect x="12" y="12" width="5" height="5" rx="1" />
+    </Svg>
+  ),
+  ungroup: () => (
+    <Svg>
+      <rect x="3" y="3" width="8" height="8" rx="1.5" />
+      <rect x="13" y="13" width="8" height="8" rx="1.5" />
+      <path d="M15 5h4v4M9 19H5v-4" strokeDasharray="2 2" />
+    </Svg>
+  ),
+  frame: () => (
+    <Svg>
+      <path d="M7 3v18M17 3v18M3 7h18M3 17h18" />
+    </Svg>
+  ),
+  flipH: () => (
+    <Svg>
+      <path d="M12 3v18" strokeDasharray="2 2.5" />
+      <path d="M9 7L4 17h5zM15 7l5 10h-5z" />
+    </Svg>
+  ),
+  flipV: () => (
+    <Svg>
+      <path d="M3 12h18" strokeDasharray="2 2.5" />
+      <path d="M7 9L17 4v5zM7 15l10 5v-5z" />
+    </Svg>
+  ),
+  brush: () => (
+    <Svg>
+      <path d="M14.5 4.5l5 5L11 18l-5-5z" />
+      <path d="M6 13c-2 0-3 1.5-3 3.5S2 20 2 20s3 .5 5-1.5c1-1 1-2.5 0-3.5" />
+    </Svg>
+  ),
 };
 
 export type IconName = keyof typeof Icons;

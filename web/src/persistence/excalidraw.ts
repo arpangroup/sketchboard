@@ -1,10 +1,12 @@
 import { LINE_HEIGHT } from '../core/constants';
 import { generateId, randomInteger } from '../core/utils';
 import type {
+  ArrowBinding,
   Arrowhead,
   BinaryFile,
   CodeElement,
   FigureElement,
+  FrameElement,
   FillStyle,
   FreeDrawElement,
   ImageElement,
@@ -21,7 +23,9 @@ import type {
 import { pointsToElementGeometry } from '../elements/handlers/pointShapes';
 import { highlighterSize, penSize } from '../elements/strokeOutline';
 import { cellLines, cellWeight, colOffsets, relayout, rowOffsets } from '../elements/table/tableLayout';
-import { measureText } from '../elements/textMetrics';
+import { measureText, wrapText } from '../elements/textMetrics';
+import { canHoldLabel } from '../elements/boundText';
+import { canBindTo } from '../elements/binding';
 import { figureGeometry, isFigure } from '../elements/figures/figures';
 import { CODE_THEMES, codeLayout } from '../elements/code/codeLayout';
 
@@ -119,6 +123,15 @@ const num = (v: unknown, fallback = 0) => (typeof v === 'number' && Number.isFin
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const str = (v: unknown, fallback: string, max = 100_000) => (typeof v === 'string' ? v.slice(0, max) : fallback);
 const color = (v: unknown, fallback: string) => (typeof v === 'string' && v.length < 64 ? v : fallback);
+/** Excalidraw binding → ours: a fixed point pins the spot, otherwise the end aims at the centre. */
+function bindingFromEx(b: unknown): ArrowBinding | undefined {
+  if (!b || typeof b !== 'object' || typeof (b as ExEl).elementId !== 'string') return undefined;
+  const fp = (b as ExEl).fixedPoint;
+  const ok = Array.isArray(fp) && Number.isFinite(fp[0]) && Number.isFinite(fp[1]);
+  const c = (v: number) => Math.max(0, Math.min(1, v));
+  return { elementId: (b as ExEl).elementId, anchor: ok ? { x: c(fp[0]), y: c(fp[1]) } : { x: 0.5, y: 0.5 } };
+}
+
 const sb = (e: ExEl): Record<string, any> | undefined =>
   e.customData && typeof e.customData === 'object' && e.customData.sketchboard && typeof e.customData.sketchboard === 'object'
     ? e.customData.sketchboard
@@ -147,7 +160,25 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
     return s;
   };
 
+  // groups SketchBoard made to hold the parts of one table / code block / figure: not real groups
+  const partGroups = new Set<string>();
+  for (const e of live) {
+    const t = sb(e);
+    for (const id of [t?.table, t?.code?.id, t?.figure ? t?.id : undefined, t?.figurePart]) if (typeof id === 'string') partGroups.add(`${id}-group`);
+  }
+  const groupsOf = (e: ExEl): string[] | undefined => {
+    const g = Array.isArray(e.groupIds) ? e.groupIds.filter((x: unknown): x is string => typeof x === 'string' && !partGroups.has(x)).slice(0, 32) : [];
+    return g.length ? g : undefined;
+  };
+  const linkOf = (e: ExEl): string | undefined => {
+    const l = typeof e.link === 'string' ? e.link.trim().slice(0, 2000) : '';
+    return /^(https?:|mailto:|tel:)/i.test(l) ? l : undefined;
+  };
+
   const base = (e: ExEl) => ({
+    groupIds: groupsOf(e),
+    frameId: typeof e.frameId === 'string' ? e.frameId : undefined,
+    link: linkOf(e),
     id: uniqueId(e.id),
     x: num(e.x),
     y: num(e.y),
@@ -310,6 +341,8 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
             height: Math.max(1, fa ? num(ftag.height, cur.h) : num(ftag.height, cur.h) * sy),
             ...(fa ? { angle: fa } : {}),
             ...(tail ? { tail } : {}),
+            ...(ftag.flipX ? { flipX: true } : {}),
+            ...(ftag.flipY ? { flipY: true } : {}),
           } as FigureElement);
           if (typeof ftag.id === 'string') rebuiltFigures.add(ftag.id);
           break;
@@ -328,6 +361,7 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
           endArrowhead: arrowheadFromEx(e.endArrowhead),
           polygon,
           sharp: pts.length > 2 && (!!e.elbowed || !e.roundness),
+          ...(polygon ? {} : { startBinding: bindingFromEx(e.startBinding), endBinding: bindingFromEx(e.endBinding) }),
         });
         break;
       }
@@ -354,7 +388,9 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
       case 'text': {
         const tag = sb(e);
         if (typeof tag?.figurePart === 'string' && rebuiltFigures.has(tag.figurePart)) break; // part of a restored code block
-        const text = str(e.text, '').replace(/\r\n/g, '\n');
+        const bound = typeof e.containerId === 'string' && e.containerId ? e.containerId : undefined;
+        // a shape's label: take the unwrapped text, SketchBoard wraps it to the shape itself
+        const text = str(bound && typeof e.originalText === 'string' ? e.originalText : e.text, '').replace(/\r\n/g, '\n');
         if (!text.trim()) break;
         const fmt = {
           fontWeight: tag?.fontWeight === 'bold' ? ('bold' as const) : ('normal' as const),
@@ -370,19 +406,50 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
         const ew = Math.abs(num(e.width));
         const x = textAlign === 'center' ? ex + (ew - m.width) / 2 : textAlign === 'right' ? ex + ew - m.width : ex;
         const y = num(e.y) + (Math.abs(num(e.height)) - m.height) / 2;
-        out.push({ ...base(e), type: 'text', x, y, width: m.width, height: m.height, text, fontSize, fontFamily, textAlign, ...fmt, ...(angle ? { angle } : {}) });
+        out.push({
+          ...base(e),
+          type: 'text',
+          x,
+          y,
+          width: m.width,
+          height: m.height,
+          text,
+          fontSize,
+          fontFamily,
+          textAlign,
+          ...fmt,
+          ...(angle ? { angle } : {}),
+          ...(bound ? { containerId: bound } : {}),
+        });
         break;
       }
       case 'image': {
         if (typeof e.fileId !== 'string') break;
-        out.push({ ...base(e), type: 'image', fileId: e.fileId, ...(angle ? { angle } : {}) } as ImageElement);
+        const sc = Array.isArray(e.scale) ? e.scale : [1, 1];
+        out.push({
+          ...base(e),
+          type: 'image',
+          fileId: e.fileId,
+          ...(angle ? { angle } : {}),
+          ...(num(sc[0], 1) < 0 ? { flipX: true } : {}),
+          ...(num(sc[1], 1) < 0 ? { flipY: true } : {}),
+        } as ImageElement);
         break;
       }
       case 'frame':
       case 'magicframe': {
         const b = base(e);
-        out.push({ ...b, type: 'rectangle', rounded: false, strokeColor: '#9ca3af', backgroundColor: 'transparent', roughness: 0, strokeWidth: 1, strokeStyle: 'solid' });
-        out.push(label(str(e.name, 'Frame', 200) || 'Frame', b.x, b.y - 22, 14, '#6b7280'));
+        out.push({
+          ...b,
+          type: 'frame',
+          name: str(e.name, 'Frame', 200) || 'Frame',
+          frameId: undefined,
+          strokeColor: '#868e96',
+          backgroundColor: 'transparent',
+          roughness: 0,
+          strokeWidth: 1,
+          strokeStyle: 'solid',
+        } as FrameElement);
         break;
       }
       case 'embeddable':
@@ -396,6 +463,22 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
       default:
         skipped.set(String(e.type), (skipped.get(String(e.type)) ?? 0) + 1);
     }
+  }
+
+  // frame references must point at a frame that made it in; labels at a shape that can hold one;
+  // arrow ends at a shape they can attach to
+  const frameIds = new Set(out.filter((e) => e.type === 'frame').map((e) => e.id));
+  const holders = new Set(out.filter(canHoldLabel).map((e) => e.id));
+  const targets = new Set(out.filter(canBindTo).map((e) => e.id));
+  for (let i = 0; i < out.length; i++) {
+    let e = out[i];
+    if ((e.type === 'arrow' || e.type === 'line') && (e.startBinding || e.endBinding)) {
+      const keep = (b?: ArrowBinding) => (b && targets.has(b.elementId) ? b : undefined);
+      e = { ...e, startBinding: keep(e.startBinding), endBinding: keep(e.endBinding) };
+    }
+    if (e.frameId && (e.type === 'frame' || !frameIds.has(e.frameId))) e = { ...e, frameId: undefined };
+    if (e.type === 'text' && e.containerId && !holders.has(e.containerId)) e = { ...e, containerId: undefined };
+    out[i] = e;
   }
 
   const files: Record<string, BinaryFile> = {};
@@ -468,8 +551,8 @@ export function toExcalidraw(
     strokeStyle: el.strokeStyle,
     roughness: clamp(Math.round(el.roughness), 0, 2),
     opacity: el.opacity,
-    groupIds: [],
-    frameId: null,
+    groupIds: el.groupIds ?? [],
+    frameId: el.frameId ?? null,
     index: null,
     roundness: null,
     seed: el.seed,
@@ -478,7 +561,7 @@ export function toExcalidraw(
     isDeleted: false,
     boundElements: null,
     updated: el.updatedAt,
-    link: null,
+    link: el.link ?? null,
     locked: el.locked,
     ...extra,
   });
@@ -491,12 +574,42 @@ export function toExcalidraw(
     return { x: o.x, y: o.y, points: abs.map((p) => [p.x - o.x, p.y - o.y]), lastCommittedPoint: null };
   };
 
+  // shape labels: Excalidraw binds text to rectangles, diamonds and ellipses
+  const BINDABLE = new Set(['rectangle', 'diamond', 'ellipse']);
+  const byId = new Map(sorted.map((e) => [e.id, e]));
+  const labelFor = new Map<string, string>();
+  for (const e of sorted) if (e.type === 'text' && e.containerId && BINDABLE.has(byId.get(e.containerId)?.type ?? '')) labelFor.set(e.containerId, e.id);
+  // arrow binding: Excalidraw attaches arrows to the shapes it has natively (same id on both sides)
+  const ARROW_TARGETS = new Set(['rectangle', 'diamond', 'ellipse', 'text', 'image']);
+  const arrowsAt = new Map<string, string[]>();
+  const exBinding = (b?: ArrowBinding) => {
+    if (!b || !ARROW_TARGETS.has(byId.get(b.elementId)?.type ?? '')) return null;
+    const centre = b.anchor.x === 0.5 && b.anchor.y === 0.5;
+    return { elementId: b.elementId, focus: 0, gap: 4, ...(centre ? {} : { fixedPoint: [b.anchor.x, b.anchor.y] }) };
+  };
+  for (const e of sorted) {
+    if (e.type !== 'arrow' && e.type !== 'line') continue;
+    for (const b of [e.startBinding, e.endBinding]) {
+      if (b && exBinding(b)) arrowsAt.set(b.elementId, [...(arrowsAt.get(b.elementId) ?? []), e.id]);
+    }
+  }
+  const boundTo = (id: string, label?: string) => {
+    const list = [...(label ? [{ type: 'text', id: label }] : []), ...[...new Set(arrowsAt.get(id) ?? [])].map((a) => ({ type: 'arrow', id: a }))];
+    return list.length ? list : null;
+  };
+
   for (const el of sorted) {
+    const start = out.length;
     switch (el.type) {
       case 'rectangle':
       case 'diamond':
       case 'ellipse':
-        out.push(common(el, { roundness: el.rounded ? { type: el.type === 'rectangle' ? 3 : 2 } : null }));
+        out.push(
+          common(el, {
+            roundness: el.rounded ? { type: el.type === 'rectangle' ? 3 : 2 } : null,
+            boundElements: boundTo(el.id, labelFor.get(el.id)),
+          }),
+        );
         break;
       case 'line':
       case 'arrow':
@@ -504,8 +617,8 @@ export function toExcalidraw(
           common(el, {
             ...rebase(el, el.type === 'line' && !!el.polygon),
             roundness: el.sharp || el.polygon ? null : { type: 2 },
-            startBinding: null,
-            endBinding: null,
+            startBinding: exBinding(el.startBinding),
+            endBinding: exBinding(el.endBinding),
             startArrowhead: ARROWHEAD_TO_EX[el.startArrowhead] ?? null,
             endArrowhead: ARROWHEAD_TO_EX[el.endArrowhead] ?? null,
             ...(el.type === 'arrow' ? { elbowed: false } : { polygon: !!el.polygon }),
@@ -528,24 +641,27 @@ export function toExcalidraw(
         );
         break;
       }
-      case 'text':
+      case 'text': {
+        const bound = el.containerId && labelFor.get(el.containerId) === el.id ? el.containerId : null;
         out.push(
           common(el, {
-            text: el.text,
+            text: el.containerId ? wrapText(el.text, el.width, el.fontSize, el.fontFamily, el).join('\n') : el.text,
             originalText: el.text,
             fontSize: el.fontSize,
             fontFamily: fontToEx(el.fontFamily),
             textAlign: el.textAlign,
-            verticalAlign: 'top',
-            containerId: null,
+            verticalAlign: bound ? 'middle' : 'top',
+            boundElements: bound ? null : boundTo(el.id),
+            containerId: bound,
             lineHeight: LINE_HEIGHT,
             autoResize: true,
             customData: { sketchboard: { fontFamily: el.fontFamily, fontWeight: el.fontWeight, fontStyle: el.fontStyle, underline: el.underline } },
           }),
         );
         break;
+      }
       case 'image':
-        out.push(common(el, { fileId: el.fileId, status: 'saved', scale: [1, 1], crop: null }));
+        out.push(common(el, { fileId: el.fileId, status: 'saved', scale: [el.flipX ? -1 : 1, el.flipY ? -1 : 1], crop: null, boundElements: boundTo(el.id) }));
         break;
       case 'table':
         out.push(...rotateParts(el, tableToExcalidraw(el, common)));
@@ -556,6 +672,16 @@ export function toExcalidraw(
       case 'code':
         out.push(...rotateParts(el, codeToExcalidraw(el, common)));
         break;
+      case 'frame':
+        out.push(common(el, { name: el.name, frameId: null }));
+        break;
+    }
+    // parts of a table / figure / code block keep their own group and also join the element's groups
+    if (el.type === 'table' || el.type === 'figure' || el.type === 'code') {
+      for (let i = start; i < out.length; i++) {
+        const own = (out[i].groupIds as string[]).filter((g) => g.startsWith(el.id));
+        out[i].groupIds = [...own, ...(el.groupIds ?? [])];
+      }
     }
   }
   out.forEach((e, i) => (e.index = fractionalIndex(i)));
@@ -653,8 +779,10 @@ function figureToExcalidraw(el: FigureElement, common: (el: SketchElement, extra
   const g = figureGeometry(el.figure, el.width, el.height, el.tail);
   const paths = [...g.polylines.map((p) => ({ p, closed: true })), ...g.detailLines.map((p) => ({ p, closed: false }))].filter((x) => x.p.length > 1);
   const groupIds = paths.length > 1 ? [`${el.id}-group`] : [];
+  const fx = (x: number) => (el.flipX ? el.width - x : x);
+  const fy = (y: number) => (el.flipY ? el.height - y : y);
   return paths.map(({ p, closed }, i) => {
-    const abs = p.map((pt) => ({ x: el.x + pt.x, y: el.y + pt.y }));
+    const abs = p.map((pt) => ({ x: el.x + fx(pt.x), y: el.y + fy(pt.y) }));
     const xs = abs.map((q) => q.x);
     const ys = abs.map((q) => q.y);
     const b = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
@@ -680,7 +808,7 @@ function figureToExcalidraw(el: FigureElement, common: (el: SketchElement, extra
       customData: {
         sketchboard:
           i === 0
-            ? { id: el.id, figure: el.figure, tail: el.tail, x: el.x, y: el.y, width: el.width, height: el.height, angle: el.angle ?? 0, outline: b }
+            ? { id: el.id, figure: el.figure, tail: el.tail, x: el.x, y: el.y, width: el.width, height: el.height, angle: el.angle ?? 0, outline: b, flipX: !!el.flipX, flipY: !!el.flipY }
             : { figurePart: el.id },
       },
     });

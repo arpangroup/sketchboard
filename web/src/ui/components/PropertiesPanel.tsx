@@ -360,6 +360,8 @@ export function PropertiesPanel() {
         />
       </Section>
 
+      {selected.length === 1 && selected[0].type === 'frame' && <FrameSection frame={selected[0]} />}
+
       {selected.length > 0 && !selected.every((e) => e.locked) && <RotationSection selected={selected} />}
 
       {selected.length > 0 && (
@@ -368,7 +370,18 @@ export function PropertiesPanel() {
             <IconBtn label="Send to back" onClick={() => actions.execute('sendToBack')}><Icons.back /></IconBtn>
             <IconBtn label="Bring to front" onClick={() => actions.execute('bringToFront')}><Icons.front /></IconBtn>
             <IconBtn label="Duplicate (Ctrl+D)" onClick={() => actions.execute('duplicate')}><Icons.copy /></IconBtn>
-            <IconBtn label="Add to library" onClick={() => actions.execute('addToLibrary')}><Icons.libraryAdd /></IconBtn>
+            <IconBtn label="Add to library (Shift+L)" onClick={() => actions.execute('addToLibrary')}><Icons.libraryAdd /></IconBtn>
+            {actions.isEnabled('ungroup') ? (
+              <IconBtn label="Ungroup (Ctrl+Shift+G)" onClick={() => actions.execute('ungroup')}><Icons.ungroup /></IconBtn>
+            ) : (
+              selected.length > 1 && <IconBtn label="Group (Ctrl+G)" onClick={() => actions.execute('group')}><Icons.group /></IconBtn>
+            )}
+            {selected.some((e) => e.type !== 'frame') && (
+              <IconBtn label="Wrap in frame (Shift+F)" onClick={() => actions.execute('wrapInFrame')}><Icons.frame /></IconBtn>
+            )}
+            <IconBtn label="Flip horizontal (Shift+H)" onClick={() => actions.execute('flipHorizontal')}><Icons.flipH /></IconBtn>
+            <IconBtn label="Flip vertical (Shift+V)" onClick={() => actions.execute('flipVertical')}><Icons.flipV /></IconBtn>
+            <IconBtn label={selected.some((e) => e.link) ? 'Edit link (Ctrl+K)' : 'Add link (Ctrl+K)'} onClick={() => actions.execute('hyperlink')}><Icons.link /></IconBtn>
             <IconBtn label={selected.every((e) => e.locked) ? 'Unlock' : 'Lock'} onClick={() => actions.execute('lock')}>
               {selected.every((e) => e.locked) ? <Icons.lock /> : <Icons.unlock />}
             </IconBtn>
@@ -825,6 +838,33 @@ function FontPicker({ value, onChange }: { value: string; onChange: (family: str
       )}
       {showCustom && <small className="sb-field__hint">Any Google Font name, or a font installed on this device.</small>}
     </div>
+  );
+}
+
+/** Frame name + quick actions. */
+function FrameSection({ frame }: { frame: Extract<SketchElement, { type: 'frame' }> }) {
+  const { editor, actions } = useEditor();
+  const [name, setName] = useState(frame.name);
+  useEffect(() => setName(frame.name), [frame.id, frame.name]);
+  const commit = () => name.trim() !== frame.name && editor.renameFrame(frame.id, name.trim() || 'Frame');
+  return (
+    <Section title="Frame">
+      <input
+        className="sb-input"
+        value={name}
+        aria-label="Frame name"
+        onChange={(e) => setName(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        }}
+      />
+      <div className="sb-row-btns">
+        <button className="sb-btn sb-btn--sm" onClick={() => actions.execute('selectFrameContents')}>Select contents</button>
+        <button className="sb-btn sb-btn--sm" onClick={() => actions.execute('removeFrame')}>Remove frame</button>
+      </div>
+    </Section>
   );
 }
 

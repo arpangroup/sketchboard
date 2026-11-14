@@ -19,6 +19,9 @@ const esc = (s: string) =>
 
 const n = (v: number) => Math.round(v * 100) / 100;
 
+/** Only web/mail links are written out (never javascript: and friends). */
+const safeLink = (link?: string): string | null => (link && /^(https?:|mailto:|tel:)/i.test(link.trim()) ? link.trim() : null);
+
 /** Renders elements as SVG markup (group per element), in world coordinates. */
 export function elementsToSvgMarkup(elements: readonly SketchElement[], mode: ColorMode): string {
   const out: string[] = [];
@@ -27,7 +30,13 @@ export function elementsToSvgMarkup(elements: readonly SketchElement[], mode: Co
     const opacity = mode === 'blackwhite' ? 1 : el.opacity / 100;
     const angle = el.angle ?? 0;
     const rotate = angle ? ` rotate(${n((angle * 180) / Math.PI)} ${n(el.width / 2)} ${n(el.height / 2)})` : '';
+    const href = safeLink(el.link);
+    if (href) out.push(`<a href="${esc(href)}" target="_blank">`);
     out.push(`<g transform="translate(${n(el.x)} ${n(el.y)})${rotate}"${opacity < 1 ? ` opacity="${opacity}"` : ''}>`);
+    const flipped = !!(el.flipX || el.flipY);
+    if (flipped) {
+      out.push(`<g transform="translate(${el.flipX ? n(el.width) : 0} ${el.flipY ? n(el.height) : 0}) scale(${el.flipX ? -1 : 1} ${el.flipY ? -1 : 1})">`);
+    }
 
     for (const d of shape.drawables) {
       const dash = d.options.strokeLineDash?.join(' ');
@@ -58,9 +67,11 @@ export function elementsToSvgMarkup(elements: readonly SketchElement[], mode: Co
           ` stroke-width="${p.strokeWidth ?? 1}" stroke-linecap="${p.lineCap ?? 'round'}" stroke-linejoin="round"${extra}/>`,
       );
     }
+    if (flipped) out.push('</g>');
     if (shape.text) out.push(textBlockToSvg(shape.text, 0, 0));
     for (const cell of shape.texts ?? []) out.push(textBlockToSvg(cell.text, cell.x, cell.y));
     out.push('</g>');
+    if (href) out.push('</a>');
   }
   return out.join('');
 }

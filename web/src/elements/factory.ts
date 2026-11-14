@@ -1,6 +1,8 @@
 import { generateId, randomInteger } from '../core/utils';
 import type {
   BaseElement,
+  Bounds,
+  FrameElement,
   CodeDefaults,
   CodeElement,
   FigureElement,
@@ -142,6 +144,27 @@ export function createCode(style: CurrentStyle, defaults: CodeDefaults, at: Poin
   const l = codeLayout(el);
   return { ...el, width: l.width, height: l.height };
 }
+
+/** A named frame around `box` (crisp grey outline, no fill). */
+export function createFrame(box: Bounds, zIndex: number, name = 'Frame'): FrameElement {
+  return {
+    ...base('frame', FRAME_STYLE, { x: box.x, y: box.y }, zIndex),
+    type: 'frame',
+    name,
+    width: box.width,
+    height: box.height,
+  };
+}
+
+const FRAME_STYLE = {
+  strokeColor: '#868e96',
+  backgroundColor: 'transparent',
+  fillStyle: 'solid',
+  strokeWidth: 1,
+  strokeStyle: 'solid',
+  roughness: 0,
+  opacity: 100,
+} as CurrentStyle;
 
 /** Gallery figure (callouts get their default tail). */
 export function createFigure(figure: string, style: CurrentStyle, at: Point, zIndex: number): FigureElement {

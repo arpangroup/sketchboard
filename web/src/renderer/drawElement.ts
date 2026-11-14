@@ -54,6 +54,14 @@ export function drawElement(
     ctx.translate(-el.width / 2, -el.height / 2);
   }
 
+  // mirrored shapes/images: flip the drawing inside its box (text is never mirrored)
+  const flipped = !!(el.flipX || el.flipY);
+  if (flipped) {
+    ctx.save();
+    ctx.translate(el.flipX ? el.width : 0, el.flipY ? el.height : 0);
+    ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
+  }
+
   for (const d of shape.drawables) rc.draw(d);
 
   if (shape.image) drawImage(ctx, shape.image.fileId, shape.image.width, shape.image.height, mode);
@@ -79,6 +87,7 @@ export function drawElement(
     ctx.globalAlpha = baseAlpha;
     ctx.globalCompositeOperation = 'source-over';
   }
+  if (flipped) ctx.restore();
 
   if (shape.text) drawTextBlock(ctx, shape.text, 0, 0);
   for (const cell of shape.texts ?? []) drawTextBlock(ctx, cell.text, cell.x, cell.y);

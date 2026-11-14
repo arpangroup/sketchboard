@@ -4,9 +4,11 @@ import type { Bounds, Point, SketchElement } from '../core/types';
 import { getElementBounds, getRawBounds } from '../elements/registry';
 import { angleOf, bakesRotation, centerOf, rotatePoint } from '../elements/rotation';
 import { tailPoint } from '../elements/handlers/figure';
+import { segmentMidpoint } from '../elements/handlers/pointShapes';
 
 export type BoxHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
-export type HandleId = BoxHandle | `p${number}` | 'tail' | 'rotate';
+/** `p{i}` = a line's point i; `m{i}` = the bend anchor halfway along segment i (drag to curve the line). */
+export type HandleId = BoxHandle | `p${number}` | `m${number}` | 'tail' | 'rotate';
 
 export interface Handle {
   id: HandleId;
@@ -56,12 +58,28 @@ export function getSelectionFrame(els: readonly SketchElement[]): SelectionFrame
 const isPointEditable = (els: readonly SketchElement[]) =>
   els.length === 1 && (els[0].type === 'line' || els[0].type === 'arrow') && els[0].points.length === 2;
 
+/** A single open line / arrow: its points and bend anchors can be dragged. */
+const editableLine = (els: readonly SketchElement[]) =>
+  els.length === 1 && (els[0].type === 'line' || els[0].type === 'arrow') && !els[0].polygon ? els[0] : null;
+
+/** Point handles plus one bend anchor in the middle of every segment (hidden on segments too short to grab). */
+function lineHandles(el: Extract<SketchElement, { type: 'line' | 'arrow' }>, zoom: number): Handle[] {
+  const out: Handle[] = el.points.map((p, i) => ({ id: `p${i}` as HandleId, x: el.x + p.x, y: el.y + p.y }));
+  for (let i = 0; i + 1 < el.points.length; i++) {
+    const a = el.points[i];
+    const b = el.points[i + 1];
+    if (Math.hypot(b.x - a.x, b.y - a.y) * zoom < HANDLE_SIZE * 3) continue;
+    const m = segmentMidpoint(el, i);
+    out.push({ id: `m${i}` as HandleId, x: el.x + m.x, y: el.y + m.y });
+  }
+  return out;
+}
+
 export function getHandles(els: readonly SketchElement[], zoom: number): Handle[] {
   if (els.length === 0 || els.some((e) => e.locked)) return [];
-  if (isPointEditable(els)) {
-    const el = els[0] as Extract<SketchElement, { points: Point[] }>;
-    return el.points.map((p, i) => ({ id: `p${i}` as HandleId, x: el.x + p.x, y: el.y + p.y }));
-  }
+  const line = editableLine(els);
+  if (isPointEditable(els)) return lineHandles(line!, zoom);
+  const points = line ? lineHandles(line, zoom) : [];
   const frame = getSelectionFrame(els)!;
   const b = expandBounds(frame.box, 6 / zoom);
   const { x, y, width: w, height: h } = b;
@@ -85,7 +103,8 @@ export function getHandles(els: readonly SketchElement[], zoom: number): Handle[
       { id: 'w', x, y: y + h / 2 },
     );
   }
-  return local.map((hd) => ({ ...hd, ...rotatePoint(hd, frame.pivot, frame.angle) }));
+  // a multi-point line keeps its box (resize / rotate) and also shows its points and bend anchors (checked first)
+  return [...points, ...local.map((hd) => ({ ...hd, ...rotatePoint(hd, frame.pivot, frame.angle) }))];
 }
 
 export function hitHandle(els: readonly SketchElement[], p: Point, zoom: number): HandleId | null {
@@ -158,6 +177,16 @@ export function drawSelection(
       ctx.fillStyle = '#ffd43b';
       ctx.fill();
       ctx.stroke();
+      ctx.fillStyle = '#fff';
+      continue;
+    }
+    if (h.id.startsWith('m')) {
+      // bend anchor: small, filled, softer than a point handle
+      ctx.arc(h.x, h.y, size * 0.36, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.55;
+      ctx.fill();
+      ctx.globalAlpha = 1;
       ctx.fillStyle = '#fff';
       continue;
     }

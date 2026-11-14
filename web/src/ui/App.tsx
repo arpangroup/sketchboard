@@ -6,7 +6,8 @@ import type { DialogId, Theme } from '../core/types';
 import { Editor } from '../editor/Editor';
 import { Canvas } from './components/Canvas';
 import { PageBadge, Toast, TopRightActions, WelcomeHint, ZoomControls } from './components/Chrome';
-import { CollabDialog, HelpDialog, PageSetupDialog } from './components/dialogs/OtherDialogs';
+import { CollabDialog, HelpDialog, HyperlinkDialog, PageSetupDialog } from './components/dialogs/OtherDialogs';
+import { canHoldLabel } from '../elements/boundText';
 import { ExportDialog } from './components/dialogs/ExportDialog';
 import { PrintDialog } from './components/dialogs/PrintDialog';
 import { MainMenu } from './components/MainMenu';
@@ -223,6 +224,7 @@ function Shell() {
     page: <PageSetupDialog onClose={close} />,
     collab: <CollabDialog onClose={close} />,
     help: <HelpDialog onClose={close} />,
+    hyperlink: <HyperlinkDialog onClose={close} />,
     install: <InstallDialog onClose={close} />,
     workspace: <WorkspaceDialog onClose={close} />,
     link: <LinkDialog onClose={close} />,
@@ -314,6 +316,11 @@ function useKeyboard() {
         if (sel.length === 1 && sel[0].type === 'text') {
           e.preventDefault();
           editor.startTextEditing(sel[0].id);
+          return;
+        }
+        if (sel.length === 1 && canHoldLabel(sel[0]) && !sel[0].locked) {
+          e.preventDefault();
+          editor.editLabel(sel[0]);
           return;
         }
       }

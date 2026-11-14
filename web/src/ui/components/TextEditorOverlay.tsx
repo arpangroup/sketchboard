@@ -33,17 +33,20 @@ export function TextEditorOverlay() {
   const z = viewport.zoom;
   const left = (el.x + viewport.scrollX) * z;
   const top = (el.y + viewport.scrollY) * z;
+  // a shape's label wraps to the shape: edit it at exactly its width, centred
+  const label = !!el.containerId;
+  const shift = label ? 0 : el.textAlign === 'center' ? -(el.fontSize * z) / 2 : el.textAlign === 'right' ? -el.fontSize * z : 0;
 
   return (
     <textarea
       ref={ref}
       className="sb-text-editor"
       spellCheck
-      wrap="off"
+      wrap={label ? 'soft' : 'off'}
       style={{
         left,
         top,
-        width: Math.max(el.width + el.fontSize, 40) * z,
+        width: label ? el.width * z : Math.max(el.width + el.fontSize, 40) * z,
         height: el.height * z + 4,
         font: `${el.fontStyle ?? 'normal'} ${el.fontWeight ?? 'normal'} ${el.fontSize * z}px ${fontCss(el.fontFamily)}`,
         textDecoration: el.underline ? 'underline' : 'none',
@@ -51,11 +54,12 @@ export function TextEditorOverlay() {
         color: el.strokeColor,
         textAlign: el.textAlign,
         opacity: el.opacity / 100,
-        marginLeft: el.textAlign === 'center' ? -(el.fontSize * z) / 2 : el.textAlign === 'right' ? -el.fontSize * z : 0,
+        marginLeft: shift,
+        ...(label ? { whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const } : {}),
         // rotated text is edited in place, turned around the element's centre
         transform: el.angle ? `rotate(${el.angle}rad)` : undefined,
         transformOrigin: el.angle
-          ? `${(el.width / 2) * z - (el.textAlign === 'center' ? -(el.fontSize * z) / 2 : el.textAlign === 'right' ? -el.fontSize * z : 0)}px ${(el.height / 2) * z}px`
+          ? `${(el.width / 2) * z - shift}px ${(el.height / 2) * z}px`
           : 'top left',
       }}
       onChange={(e) => editor.updateEditingText(e.target.value)}

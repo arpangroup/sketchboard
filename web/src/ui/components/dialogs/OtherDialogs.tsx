@@ -11,6 +11,7 @@ import type {
 import { MAX_PAGES, PAGE_NUMBER_FORMAT_OPTIONS, requiredPageCount, sectionOfPage } from '../../../page/pageLayout';
 import { addSection, removeSection, setOwnArea, updateSection } from '../../../page/sections';
 import { Icons } from '../../icons/Icons';
+import { normalizeLink } from '../../../elements/structure';
 import { getPageDimensions, isUniformMargins, MAX_MARGIN_MM, MM_TO_PX, PAGE_SIZE_OPTIONS, type PageDimensions, resolveMargins } from '../../../page/pageSizes';
 import { useAppState, useEditor, useSceneRevision } from '../../EditorContext';
 import { Field, Modal, Segmented } from './Modal';
@@ -490,6 +491,12 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['Duplicate while moving', 'Alt + drag'],
     ['Nudge', 'Arrow keys (Shift = 10px)'],
     ['Edit text', 'Double-click or Enter'],
+    ['Connect shapes (arrow follows them)', 'Draw an arrow from one shape to another · hold Ctrl to keep it free'],
+    ['Curve a line or arrow', 'Select it and drag the dot in the middle of a segment'],
+    ['Remove a bend', 'Double-click the bend point (or right-click → Straighten)'],
+    ['Label a shape (centred text inside it)', 'Double-click the shape, or select it and press Enter'],
+    ['More actions', 'Right-click (group, frame, flip, copy as PNG…)'],
+    ['Open an element’s link', 'Ctrl+click it, or click its link badge'],
     ['Bold / italic / underline', 'Ctrl+B / Ctrl+I / Ctrl+U'],
     ['Paste image or text', 'Ctrl+V (or drag & drop files)'],
     ['Stylus', 'Pen draws, fingers pan & pinch (Pen mode)'],
@@ -509,6 +516,63 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
             <kbd>{k}</kbd>
           </div>
         ))}
+      </div>
+    </Modal>
+  );
+}
+
+/** Add / edit / remove the hyperlink on the selected elements. */
+export function HyperlinkDialog({ onClose }: { onClose: () => void }) {
+  const { editor } = useEditor();
+  const sel = editor.getSelectedElements();
+  const existing = sel.find((e) => e.link)?.link ?? '';
+  const [value, setValue] = useState(existing);
+  const [error, setError] = useState<string | null>(null);
+  const preview = value.trim() ? normalizeLink(value) : null;
+
+  const save = () => {
+    if (!editor.setLinkOnSelection(value)) return setError('That doesn’t look like a web address — try https://example.com');
+    editor.toast(value.trim() ? 'Link added — Ctrl+click or use the link badge to open it' : 'Link removed');
+    onClose();
+  };
+
+  return (
+    <Modal title={existing ? 'Edit link' : 'Add link'} onClose={onClose}>
+      <Field
+        label={`Link for ${sel.length === 1 ? 'this element' : `${sel.length} elements`}`}
+        hint={error ?? (preview && preview !== value.trim() ? `Opens ${preview}` : 'A web page, email address or phone link.')}
+      >
+        <input
+          className="sb-input"
+          autoFocus
+          placeholder="https://example.com"
+          value={value}
+          aria-label="Link address"
+          aria-invalid={!!error}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setError(null);
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && save()}
+        />
+      </Field>
+      <div className="sb-modal__actions">
+        {existing && (
+          <button
+            className="sb-btn"
+            onClick={() => {
+              editor.setLinkOnSelection(null);
+              editor.toast('Link removed');
+              onClose();
+            }}
+          >
+            Remove link
+          </button>
+        )}
+        <button className="sb-btn" onClick={onClose}>Cancel</button>
+        <button className="sb-btn sb-btn--primary" onClick={save} disabled={!sel.length}>
+          Save
+        </button>
       </div>
     </Modal>
   );

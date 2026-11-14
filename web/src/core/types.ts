@@ -27,7 +27,8 @@ export type ElementType =
   | 'image'
   | 'table'
   | 'figure'
-  | 'code';
+  | 'code'
+  | 'frame';
 
 export type FillStyle = 'hachure' | 'cross-hatch' | 'solid' | 'zigzag' | 'dots';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
@@ -78,11 +79,30 @@ export interface BaseElement extends ElementStyle {
   isDeleted: boolean;
   locked: boolean;
   updatedAt: number;
+  /**
+   * Groups this element belongs to, innermost first (same convention as Excalidraw).
+   * Clicking any member selects the whole outermost group.
+   */
+  groupIds?: string[];
+  /** The frame this element sits in (moves and is deleted with it). */
+  frameId?: string;
+  /** Hyperlink (http(s), mailto:…) opened from the link badge or with Ctrl/Cmd+click. */
+  link?: string;
+  /** Mirrored drawing (images and gallery shapes; other types flip by moving their geometry). */
+  flipX?: boolean;
+  flipY?: boolean;
 }
 
 export interface ShapeElement extends BaseElement {
   type: 'rectangle' | 'diamond' | 'ellipse';
   rounded: boolean;
+}
+
+/** An arrow / line end attached to a shape (see elements/binding.ts). */
+export interface ArrowBinding {
+  elementId: string;
+  /** Spot the end aims at, as fractions of the shape's own box: {0.5, 0.5} = its centre. */
+  anchor: Point;
 }
 
 export interface LinearElement extends BaseElement {
@@ -95,6 +115,9 @@ export interface LinearElement extends BaseElement {
   polygon?: boolean;
   /** Straight segments between points (e.g. elbow connectors) instead of a smooth curve. */
   sharp?: boolean;
+  /** Ends attached to shapes: they follow those shapes when they move, resize or turn. */
+  startBinding?: ArrowBinding;
+  endBinding?: ArrowBinding;
 }
 
 export type FreeDrawKind = 'pen' | 'highlighter';
@@ -165,6 +188,11 @@ export interface TextElement extends BaseElement {
   fontWeight: FontWeight;
   fontStyle: FontStyle;
   underline: boolean;
+  /**
+   * Label of a shape: the text sits centred inside that shape, wraps to its width and moves,
+   * turns, flips and is deleted with it (no grouping needed).
+   */
+  containerId?: string;
 }
 
 /**
@@ -211,7 +239,22 @@ export interface CodeDefaults {
   markColor: CodeMark;
 }
 
-export type SketchElement = ShapeElement | LinearElement | FreeDrawElement | TextElement | ImageElement | TableElement | FigureElement | CodeElement;
+/** Named container: elements inside move, duplicate and delete with it; exported as a titled box. */
+export interface FrameElement extends BaseElement {
+  type: 'frame';
+  name: string;
+}
+
+export type SketchElement =
+  | ShapeElement
+  | LinearElement
+  | FreeDrawElement
+  | TextElement
+  | ImageElement
+  | TableElement
+  | FigureElement
+  | CodeElement
+  | FrameElement;
 
 export type ElementOfType<T extends ElementType> = Extract<SketchElement, { type: T }>;
 
@@ -390,7 +433,7 @@ export interface LibraryItem {
   category?: string;
 }
 
-export type DialogId = 'export' | 'print' | 'page' | 'collab' | 'help' | 'install' | 'workspace' | 'link';
+export type DialogId = 'export' | 'print' | 'page' | 'collab' | 'help' | 'install' | 'workspace' | 'link' | 'hyperlink';
 
 /** Serialisable document format (.sketchboard files & local storage). */
 export interface SceneData {

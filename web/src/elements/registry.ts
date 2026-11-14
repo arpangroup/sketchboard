@@ -8,6 +8,7 @@ import { TableHandler } from './handlers/table';
 import { TextHandler } from './handlers/text';
 import { FigureHandler } from './handlers/figure';
 import { CodeHandler } from './handlers/code';
+import { FrameHandler } from './handlers/frame';
 
 /**
  * Registry of element strategies. New element types are added by registering a handler -
@@ -39,7 +40,8 @@ export const elementRegistry = new ElementRegistry()
   .register(new ImageHandler())
   .register(new TableHandler())
   .register(new FigureHandler())
-  .register(new CodeHandler());
+  .register(new CodeHandler())
+  .register(new FrameHandler());
 
 /** Axis-aligned world bounds, including rotation. */
 export const getElementBounds = (el: SketchElement) => rotatedBounds(el, elementRegistry.get(el).getBounds(el));
@@ -48,4 +50,14 @@ export const getElementBounds = (el: SketchElement) => rotatedBounds(el, element
 export const getRawBounds = (el: SketchElement) => elementRegistry.get(el).getBounds(el);
 
 /** Hit test that understands rotation: the point is turned into the element's own frame first. */
-export const hitTestElement = (el: SketchElement, p: Point, tolerance: number) => elementRegistry.get(el).hitTest(el, toLocal(el, p), tolerance);
+export const hitTestElement = (el: SketchElement, p: Point, tolerance: number) =>
+  elementRegistry.get(el).hitTest(el, unflip(el, toLocal(el, p)), tolerance);
+
+/** Mirrored elements are drawn flipped inside their box: mirror the point back before testing. */
+export function unflip(el: SketchElement, p: Point): Point {
+  if (!el.flipX && !el.flipY) return p;
+  return {
+    x: el.flipX ? el.x + el.width - (p.x - el.x) : p.x,
+    y: el.flipY ? el.y + el.height - (p.y - el.y) : p.y,
+  };
+}

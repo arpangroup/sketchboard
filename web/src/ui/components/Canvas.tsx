@@ -1,10 +1,13 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ContextMenu, type ContextMenuRequest } from './ContextMenu';
 import { useEditor } from '../EditorContext';
 
 /** Thin React shell around the imperative canvas engine. */
 export function Canvas() {
   const { editor } = useEditor();
   const ref = useRef<HTMLCanvasElement>(null);
+  const [menu, setMenu] = useState<ContextMenuRequest | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   useEffect(() => {
     const canvas = ref.current!;
@@ -32,6 +35,7 @@ export function Canvas() {
   }, [editor]);
 
   return (
+    <>
     <canvas
       ref={ref}
       className="sb-canvas"
@@ -46,6 +50,14 @@ export function Canvas() {
       onPointerCancel={(e) => editor.handlePointerUp(e.nativeEvent)}
       onLostPointerCapture={(e) => editor.handleLostCapture(e.nativeEvent)}
       onDoubleClick={(e) => editor.handleDoubleClick(e.nativeEvent)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (editor.getState().editingTextId || editor.getState().presenting) return;
+        const kind = editor.prepareContextMenu(e.nativeEvent);
+        setMenu({ x: e.clientX, y: e.clientY, kind });
+      }}
     />
+    {menu && <ContextMenu request={menu} onClose={closeMenu} />}
+    </>
   );
 }

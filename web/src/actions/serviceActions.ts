@@ -52,7 +52,7 @@ export function workspaceActions(ws: WorkspaceService): Action[] {
 /** Actions that need the library store. */
 export function libraryActions(library: LibraryStore): Action[] {
   const add = (ed: Editor, all: boolean) => {
-    const elements = all ? ed.scene.getElements() : ed.getSelectedElements();
+    const elements = all ? ed.scene.getElements() : ed.withFrameChildren(ed.getSelectedElements());
     if (!elements.length) return ed.toast(all ? 'The board is empty' : 'Select something to add to your library first');
     try {
       const item = library.add(elements);
@@ -65,7 +65,14 @@ export function libraryActions(library: LibraryStore): Action[] {
     }
   };
   return [
-    { id: 'addToLibrary', label: 'Add selection to library', perform: (ed) => add(ed, false) },
+    {
+      id: 'addToLibrary',
+      label: 'Add to library',
+      shortcut: 'Shift+L',
+      keyTest: (e) => !e.ctrlKey && !e.metaKey && !e.altKey && e.shiftKey && e.code === 'KeyL',
+      enabled: (ed) => Object.keys(ed.getState().selectedIds).length > 0,
+      perform: (ed) => add(ed, false),
+    },
     { id: 'addCanvasToLibrary', label: 'Add whole canvas to library', perform: (ed) => add(ed, true) },
     { id: 'openLibrary', label: 'Libraries', perform: openLibraryTab },
   ];

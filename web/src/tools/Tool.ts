@@ -46,6 +46,29 @@ export interface ToolContext {
   emitLaser(world: Point, startStroke: boolean): void;
   /** The laser stroke ended (pen / mouse released). */
   releaseLaser(): void;
+  /** Ids widened to whole groups (clicking one member selects its group). */
+  expandToGroups(ids: Iterable<string>): string[];
+  /** The selection plus the contents of any selected frame. */
+  withFrameChildren(els: readonly SketchElement[]): SketchElement[];
+  /** Re-checks which frame each element sits in after it moved or was created. */
+  assignFrames(ids: Iterable<string>, commit?: boolean): void;
+  /** The element whose link badge is at this world point. */
+  linkBadgeAt(world: Point): SketchElement | null;
+  openLink(el: SketchElement): void;
+  /** Shape an arrow end at this point would attach to (null with nothing near). */
+  bindingTargetAt(world: Point, exclude: Iterable<string>): SketchElement | null;
+  /** Attaches (or detaches) the arrow's ends to whatever shapes they now touch. */
+  bindArrow(id: string, ends?: 'start' | 'end' | 'both', allowBind?: boolean): void;
+  /** After arrows moved: ends that travelled without their shape re-attach to what they touch now. */
+  rebindMoved(movedIds: Iterable<string>): void;
+  /** Highlights the shape an arrow end is about to attach to (null clears it). */
+  setBindingHint(id: string | null): void;
+  /** Topmost shape that can hold a label whose area contains the point (filled or not). */
+  labelShapeAt(world: Point): SketchElement | null;
+  /** Edits a shape's label, starting one if it has none. */
+  editLabel(box: SketchElement): void;
+  /** Re-centres labels after their shapes were resized. */
+  syncLabels(containerIds?: Iterable<string>): void;
 }
 
 /**

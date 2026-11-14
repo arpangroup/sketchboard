@@ -13,6 +13,7 @@ import type {
   TableDefaults,
   TableElement,
   TextElement,
+  LinearElement,
   ToolType,
   Viewport,
   WorkspaceFileRef,
@@ -21,9 +22,28 @@ import type {
   CodeMark,
 } from '../core/types';
 import { codeLayout, resetCodeMetrics } from '../elements/code/codeLayout';
-import { angleOf, bakesRotation, centerOf, keepTopLeft, normalizeAngle, rotateAround } from '../elements/rotation';
+import { angleOf, bakesRotation, centerOf, keepTopLeft, normalizeAngle, rotateAround, toLocal } from '../elements/rotation';
 import { getFigure } from '../elements/figures/figures';
-import { cloneElement, createCode, createImage, createText, updateElement } from '../elements/factory';
+import { cloneElement, createCode, createFrame, createImage, createText, updateElement } from '../elements/factory';
+import {
+  expandToGroups,
+  type FlipAxis,
+  flipPatches,
+  frameBoxFor,
+  framePatches,
+  groupPatches,
+  normalizeLink,
+  type Patches,
+  remapCopies,
+  ungroupPatches,
+  withFrameChildren,
+} from '../elements/structure';
+import { exportToPngBlob } from '../export/pngExport';
+import { exportToSvg } from '../export/svgExport';
+import { drawLinkBadges, linkBadges } from '../renderer/linkBadge';
+import { pointsToElementGeometry } from '../elements/handlers/pointShapes';
+import { canHoldLabel, labelNeedsLayout, labelOf, layoutLabel, withLabels } from '../elements/boundText';
+import { anchorFor, arrowsBoundTo, BIND_DISTANCE, bindableAt, boundArrowGeometry } from '../elements/binding';
 import {
   distributeColumns,
   insertCol,
@@ -131,7 +151,9 @@ export class Editor implements ToolContext {
       document.fonts.addEventListener('loadingdone', () => this.refreshTextMetrics());
     }
     fileStore.on('added', () => this.requestRender());
-    this.scene.onChange(() => {
+    this.scene.onChange((c) => {
+      // shapes that moved / resized / turned drag the arrows attached to them along (same undo step)
+      if (c.source === 'local' && !this.syncingArrows) this.syncArrows(c.changed.map((e) => e.id));
       this.requestRender();
       this.autosave();
     });
@@ -163,7 +185,14 @@ export class Editor implements ToolContext {
     for (let i = els.length - 1; i >= 0; i--) {
       const el = els[i];
       if (el.id === editing) continue;
-      if (hitTestElement(el, world, tolerance)) return el;
+      if (hitTestElement(el, world, tolerance)) {
+        // a shape's label stands for its shape (click selects the shape, double-click edits the label)
+        if (el.type === 'text' && el.containerId) {
+          const box = this.scene.getElement(el.containerId);
+          if (box && !box.isDeleted) return box;
+        }
+        return el;
+      }
     }
     return null;
   };
@@ -180,6 +209,7 @@ export class Editor implements ToolContext {
   };
 
   finishCreation = (el: SketchElement): void => {
+    this.assignFrames([el.id], false);
     this.commitHistory();
     if (!this.getState().toolLocked) this.setTool('selection');
     this.setSelection([el.id]);
@@ -260,6 +290,8 @@ export class Editor implements ToolContext {
       decorations: this.getPageDecorations(),
       overlay: (ctx, zoom) => {
         if (s.activeTool === 'selection') drawSelection(ctx, selected, zoom);
+        this.drawBindingHint(ctx, zoom);
+        drawLinkBadges(ctx, linkBadges(this.scene.getElements(), zoom, editing ? new Set([editing]) : undefined), zoom);
         tool.renderOverlay?.(ctx, zoom);
         this.laser.render(ctx, zoom);
         this.drawPageHighlight(ctx, zoom);
@@ -613,7 +645,8 @@ export class Editor implements ToolContext {
   updateStyle(patch: Partial<CurrentStyle>): void {
     if (patch.fontFamily) void ensureFontLoaded(patch.fontFamily, patch.fontWeight, patch.fontStyle);
     this.setState((s) => ({ currentStyle: { ...s.currentStyle, ...patch } }));
-    const selected = this.getSelectedElements();
+    // a selected shape's label takes the text settings (font, size, colour…) too
+    const selected = withLabels(this.scene.getElements(), this.getSelectedElements());
     if (!selected.length) return;
     const updates = selected.map((el) => {
       const p: Record<string, unknown> = {};
@@ -656,6 +689,7 @@ export class Editor implements ToolContext {
       return updateElement(el, anchored(el, p as Partial<SketchElement>));
     });
     this.scene.upsert(updates);
+    this.syncLabels(selected.map((e) => (e.type === 'text' && e.containerId ? e.containerId : e.id)));
     this.commitHistory();
   }
 
@@ -669,6 +703,11 @@ export class Editor implements ToolContext {
     const id = this.getState().editingTextId;
     const el = id ? (this.scene.getElement(id) as TextElement | undefined) : undefined;
     if (!el) return;
+    const box = el.containerId ? this.scene.getElement(el.containerId) : undefined;
+    if (box && !box.isDeleted) {
+      this.scene.upsert([updateElement(el, { text, ...layoutLabel({ ...el, text }, box) })]);
+      return;
+    }
     const m = measureText(text || ' ', el.fontSize, el.fontFamily, el);
     // keep alignment anchor stable while typing
     const dx = el.textAlign === 'center' ? (el.width - m.width) / 2 : el.textAlign === 'right' ? el.width - m.width : 0;
@@ -688,14 +727,159 @@ export class Editor implements ToolContext {
     }
     this.commitHistory();
     if (!this.getState().toolLocked) this.setTool('selection');
-    if (this.getState().activeTool === 'selection') this.setSelection([el.id]);
+    if (this.getState().activeTool === 'selection') this.setSelection([el.containerId && this.scene.getElement(el.containerId) ? el.containerId : el.id]);
   }
+
+  // ───────────────────────────── Arrow binding ─────────────────────────────
+
+  private syncingArrows = false;
+  private bindingHint: string | null = null;
+
+  /** Re-attaches the ends of arrows bound to any of `shapeIds` (called on every local change). */
+  syncArrows(shapeIds: Iterable<string>): void {
+    const ids = new Set(shapeIds);
+    if (!ids.size) return;
+    const arrows = arrowsBoundTo(this.scene.getElements(), ids);
+    if (!arrows.length) return;
+    const get = (id: string) => this.scene.getElement(id);
+    const updates: SketchElement[] = [];
+    for (const a of arrows) {
+      const geo = boundArrowGeometry(a, get);
+      if (geo) updates.push(updateElement(a, geo));
+    }
+    if (!updates.length) return;
+    this.syncingArrows = true;
+    try {
+      this.scene.upsert(updates);
+    } finally {
+      this.syncingArrows = false;
+    }
+  }
+
+  bindingTargetAt = (world: Point, exclude: Iterable<string>): SketchElement | null =>
+    bindableAt(this.scene.getElements(), world, BIND_DISTANCE / this.getViewport().zoom, new Set(exclude));
+
+  /**
+   * Attaches each chosen end of an arrow / line to the shape it now touches — or detaches it from
+   * empty space — then snaps the attached ends onto the outlines.
+   */
+  bindArrow = (id: string, ends: 'start' | 'end' | 'both' = 'both', allowBind = true): void => {
+    const a = this.scene.getElement(id);
+    if (!a || (a.type !== 'arrow' && a.type !== 'line') || a.polygon || a.points.length < 2) return;
+    const pts = a.points.map((q) => ({ x: q.x + a.x, y: q.y + a.y }));
+    const exclude = [a.id];
+    const bindAt = (p: Point) => {
+      if (!allowBind) return undefined; // Ctrl/Cmd held: leave the end free
+      const t = this.bindingTargetAt(p, exclude);
+      return t ? { elementId: t.id, anchor: anchorFor(t, p) } : undefined;
+    };
+    const patch: Partial<LinearElement> = {};
+    if (ends !== 'end') patch.startBinding = bindAt(pts[0]);
+    if (ends !== 'start') patch.endBinding = bindAt(pts[pts.length - 1]);
+    // both ends on one shape would collapse the arrow: keep only the end that was just placed
+    const sb = 'startBinding' in patch ? patch.startBinding : a.startBinding;
+    const eb = 'endBinding' in patch ? patch.endBinding : a.endBinding;
+    if (sb && eb && sb.elementId === eb.elementId) {
+      if (ends === 'start') patch.startBinding = undefined;
+      else patch.endBinding = undefined;
+    }
+    const next = updateElement(a, patch) as LinearElement;
+    const geo = boundArrowGeometry(next, (x) => this.scene.getElement(x));
+    this.scene.upsert([geo ? updateElement(next, geo) : next]);
+  };
+
+  /**
+   * After arrows were moved: ends that travelled without their shape attach to whatever they now
+   * touch (or come free); ends whose shape moved with them stay as they are.
+   */
+  rebindMoved = (movedIds: Iterable<string>): void => {
+    const ids = new Set(movedIds);
+    for (const id of ids) {
+      const a = this.scene.getElement(id);
+      if (!a || (a.type !== 'arrow' && a.type !== 'line')) continue;
+      const startFree = !a.startBinding || !ids.has(a.startBinding.elementId);
+      const endFree = !a.endBinding || !ids.has(a.endBinding.elementId);
+      if (startFree || endFree) this.bindArrow(id, startFree && endFree ? 'both' : startFree ? 'start' : 'end');
+    }
+  };
+
+  setBindingHint = (id: string | null): void => {
+    if (this.bindingHint === id) return;
+    this.bindingHint = id;
+    this.requestRender();
+  };
+
+  /** Outline around the shape an arrow end is about to attach to. */
+  private drawBindingHint(ctx: CanvasRenderingContext2D, zoom: number): void {
+    const el = this.bindingHint ? this.scene.getElement(this.bindingHint) : undefined;
+    if (!el || el.isDeleted) return;
+    const pad = 5 / zoom;
+    ctx.save();
+    ctx.translate(el.x + el.width / 2, el.y + el.height / 2);
+    ctx.rotate(el.angle ?? 0);
+    ctx.strokeStyle = 'rgba(91, 91, 214, 0.75)';
+    ctx.lineWidth = 3 / zoom;
+    ctx.beginPath();
+    const w = el.width / 2 + pad;
+    const h = el.height / 2 + pad;
+    if (el.type === 'ellipse') ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+    else if (el.type === 'diamond') {
+      ctx.moveTo(0, -h);
+      ctx.lineTo(w, 0);
+      ctx.lineTo(0, h);
+      ctx.lineTo(-w, 0);
+      ctx.closePath();
+    } else ctx.roundRect(-w, -h, w * 2, h * 2, 6 / zoom);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ───────────────────────────── Shape labels ─────────────────────────────
+
+  /** Topmost rectangle / ellipse / diamond / gallery shape whose box contains the point — even unfilled ones. */
+  labelShapeAt = (world: Point): SketchElement | null => {
+    const els = this.scene.getElements();
+    for (let i = els.length - 1; i >= 0; i--) {
+      const el = els[i];
+      if (!canHoldLabel(el) || el.locked) continue;
+      const p = toLocal(el, world);
+      if (p.x >= el.x && p.x <= el.x + el.width && p.y >= el.y && p.y <= el.y + el.height) return el;
+    }
+    return null;
+  };
+
+  /** Double-click on a shape: edit its label, or start one centred in the shape. */
+  editLabel = (box: SketchElement): void => {
+    if (!canHoldLabel(box) || box.locked) return;
+    const existing = labelOf(this.scene.getElements(), box.id);
+    if (existing) return this.startTextEditing(existing.id);
+    const style = this.getState().currentStyle;
+    const stroke = box.strokeColor && box.strokeColor !== 'transparent' ? box.strokeColor : style.strokeColor;
+    const base = { ...createText(style, { x: box.x, y: box.y }, this.nextZIndex()), textAlign: 'center' as const, strokeColor: stroke, containerId: box.id };
+    const label = { ...base, ...layoutLabel(base, box), frameId: box.frameId, groupIds: box.groupIds };
+    this.scene.upsert([label]);
+    this.startTextEditing(label.id);
+  };
+
+  /** Re-centres / re-wraps labels after their shapes changed (all labels, or those of `containerIds`). */
+  syncLabels = (containerIds?: Iterable<string>, silent = false): void => {
+    const only = containerIds ? new Set(containerIds) : null;
+    const updates: SketchElement[] = [];
+    for (const el of this.scene.getElements()) {
+      if (el.type !== 'text' || !el.containerId || (only && !only.has(el.containerId))) continue;
+      const box = this.scene.getElement(el.containerId);
+      if (!box || box.isDeleted || !labelNeedsLayout(el, box)) continue;
+      const patch = layoutLabel(el, box);
+      updates.push(silent ? { ...el, ...patch } : updateElement(el, patch));
+    }
+    if (updates.length) this.scene.upsert(updates, silent ? 'load' : undefined);
+  };
 
   // ───────────────────────────── Rotation ─────────────────────────────
 
   /** Turns the selection by `delta` radians around its centre (one undo step). */
   rotateSelection(delta: number): void {
-    const sel = this.getSelectedElements().filter((e) => !e.locked);
+    const sel = withFrameChildren(this.scene.getElements(), this.getSelectedElements()).filter((e) => !e.locked);
     if (!sel.length || !delta) return;
     const b = unionBounds(sel.map(getElementBounds))!;
     const pivot = sel.length === 1 && !bakesRotation(sel[0]) ? centerOf(sel[0]) : { x: b.x + b.width / 2, y: b.y + b.height / 2 };
@@ -708,6 +892,228 @@ export class Editor implements ToolContext {
     const sel = this.getSelectedElements().filter((e) => !e.locked && !bakesRotation(e));
     if (!sel.length) return;
     this.scene.upsert(sel.map((el) => updateElement(el, { angle: normalizeAngle(angle) })));
+    this.syncLabels(sel.map((e) => e.id));
+    this.commitHistory();
+  }
+
+  // ───────────────────────── Groups, frames, flip, links ─────────────────────────
+
+  /**
+   * Right-click: an unselected element under the pointer becomes the selection (with its group);
+   * empty canvas clears it. Returns which menu to show.
+   */
+  prepareContextMenu(e: MouseEvent): 'element' | 'canvas' {
+    if (!this.canvas) return 'canvas';
+    const info = this.toPointerInfo(e);
+    this.lastPointer = info.world;
+    if (this.getState().activeTool !== 'selection') this.setTool('selection');
+    const hit = this.hitTest(info.world);
+    if (hit) {
+      if (!this.getState().selectedIds[hit.id]) this.setSelection(this.expandToGroups([hit.id]));
+      return 'element';
+    }
+    // inside the current multi-selection's box still targets the selection
+    const sel = this.getSelectedElements();
+    const b = sel.length > 1 ? unionBounds(sel.map(getElementBounds)) : null;
+    if (b && info.world.x >= b.x && info.world.x <= b.x + b.width && info.world.y >= b.y && info.world.y <= b.y + b.height) return 'element';
+    this.setSelection([]);
+    return 'canvas';
+  }
+
+  expandToGroups = (ids: Iterable<string>): string[] => expandToGroups(this.scene.getElements(), ids);
+
+  withFrameChildren = (els: readonly SketchElement[]): SketchElement[] => withFrameChildren(this.scene.getElements(), els);
+
+  /** Re-checks frame membership (elements dragged into / out of frames). */
+  assignFrames = (ids: Iterable<string>, commit = true): void => {
+    const set = new Set(ids);
+    const els = this.scene.getElements().filter((e) => set.has(e.id));
+    if (this.applyPatches(framePatches(this.scene.getElements(), els)) && commit) this.commitHistory();
+  };
+
+  /** Applies id → patch maps as new element versions. Returns whether anything changed. */
+  private applyPatches(patches: Patches): boolean {
+    if (!patches.size) return false;
+    const updates: SketchElement[] = [];
+    for (const [id, patch] of patches) {
+      const el = this.scene.getElement(id);
+      if (el) updates.push(updateElement(el, patch));
+    }
+    this.scene.upsert(updates);
+    this.syncLabels(patches.keys());
+    return updates.length > 0;
+  }
+
+  canGroup = (): boolean => groupPatches(this.getSelectedElements()) !== null;
+  canUngroup = (): boolean => this.getSelectedElements().some((e) => e.groupIds?.length);
+
+  groupSelected(): void {
+    const r = groupPatches(this.getSelectedElements());
+    if (!r) return;
+    this.applyPatches(r.patches);
+    this.commitHistory();
+  }
+
+  ungroupSelected(): void {
+    if (this.applyPatches(ungroupPatches(this.getSelectedElements()))) this.commitHistory();
+  }
+
+  /** Puts a named frame around the selection (one undo step) and selects it. */
+  wrapSelectionInFrame(): void {
+    const sel = this.getSelectedElements().filter((e) => e.type !== 'frame');
+    const box = frameBoxFor(sel);
+    if (!box) return;
+    const n = this.scene.getElements().filter((e) => e.type === 'frame').length + 1;
+    const z = Math.min(...sel.map((e) => e.zIndex)) - 1;
+    const frame = createFrame(box, z, `Frame ${n}`);
+    this.scene.upsert([frame, ...sel.map((e) => updateElement(e, { frameId: frame.id }))]);
+    this.setSelection([frame.id]);
+    this.commitHistory();
+  }
+
+  /** Deletes the selected frames but keeps what was inside them. */
+  removeFrameSelected(): void {
+    const frames = this.getSelectedElements().filter((e) => e.type === 'frame');
+    if (!frames.length) return;
+    const ids = new Set(frames.map((f) => f.id));
+    const kids = this.scene.getElements().filter((e) => e.frameId && ids.has(e.frameId));
+    this.scene.upsert([...frames.map((f) => updateElement(f, { isDeleted: true })), ...kids.map((k) => updateElement(k, { frameId: undefined }))]);
+    this.setSelection(kids.map((k) => k.id));
+    this.commitHistory();
+  }
+
+  renameFrame(id: string, name: string): void {
+    const f = this.scene.getElement(id);
+    if (f?.type !== 'frame') return;
+    this.scene.upsert([updateElement(f, { name: name.slice(0, 120) })]);
+    this.commitHistory();
+  }
+
+  /** Selects everything inside the selected frame(s). */
+  selectFrameContents(): void {
+    const frames = new Set(this.getSelectedElements().filter((e) => e.type === 'frame').map((e) => e.id));
+    const kids = this.scene.getElements().filter((e) => e.frameId && frames.has(e.frameId));
+    if (kids.length) this.setSelection(kids.map((k) => k.id));
+  }
+
+  flipSelected(axis: FlipAxis): void {
+    const sel = withFrameChildren(this.scene.getElements(), this.getSelectedElements());
+    if (this.applyPatches(flipPatches(sel, axis))) this.commitHistory();
+  }
+
+  /** Removes every bend from the selected lines / arrows (keeps their two ends). */
+  straightenSelected(): void {
+    const lines = this.getSelectedElements().filter(
+      (e): e is LinearElement => (e.type === 'line' || e.type === 'arrow') && !e.locked && !e.polygon && e.points.length > 2,
+    );
+    if (!lines.length) return;
+    this.scene.upsert(
+      lines.map((l) => {
+        const ends = [l.points[0], l.points[l.points.length - 1]].map((q) => ({ x: q.x + l.x, y: q.y + l.y }));
+        return updateElement(l, pointsToElementGeometry(ends) as Partial<LinearElement>);
+      }),
+    );
+    this.commitHistory();
+  }
+
+  canStraighten = (): boolean =>
+    this.getSelectedElements().some((e) => (e.type === 'line' || e.type === 'arrow') && !e.polygon && e.points.length > 2);
+
+  /** Copies the selection (or the whole drawing) to the clipboard as a PNG picture. */
+  async copyAsPng(): Promise<void> {
+    const els = this.copyTargets();
+    if (!els.length) return this.toast('Nothing to copy');
+    const region = contentBounds(els, 16)!;
+    try {
+      const blob = exportToPngBlob(els, { region, colorMode: this.getState().viewColorMode, background: true, scale: 2 });
+      // Safari needs the promise passed straight to ClipboardItem (inside the user gesture)
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      this.toast('Copied as PNG');
+    } catch {
+      this.toast('Couldn’t copy the picture — your browser blocked clipboard access');
+    }
+  }
+
+  /** Copies the selection (or the whole drawing) to the clipboard as SVG markup. */
+  async copyAsSvg(): Promise<void> {
+    const els = this.copyTargets();
+    if (!els.length) return this.toast('Nothing to copy');
+    const svg = exportToSvg(els, { region: contentBounds(els, 16)!, colorMode: this.getState().viewColorMode, background: true });
+    try {
+      const item: Record<string, Blob> = { 'text/plain': new Blob([svg], { type: 'text/plain' }) };
+      if (typeof ClipboardItem !== 'undefined' && ClipboardItem.supports?.('image/svg+xml')) item['image/svg+xml'] = new Blob([svg], { type: 'image/svg+xml' });
+      await navigator.clipboard.write([new ClipboardItem(item)]);
+      this.toast('Copied as SVG');
+    } catch {
+      try {
+        await navigator.clipboard.writeText(svg);
+        this.toast('Copied as SVG');
+      } catch {
+        this.toast('Couldn’t copy — your browser blocked clipboard access');
+      }
+    }
+  }
+
+  private copyTargets(): SketchElement[] {
+    const sel = this.getSelectedElements();
+    const els = sel.length ? withFrameChildren(this.scene.getElements(), sel) : this.scene.getElements();
+    return [...els].sort((a, b) => a.zIndex - b.zIndex);
+  }
+
+  /** Sets (or with null / '' removes) the link on every selected element. Returns false for an invalid URL. */
+  setLinkOnSelection(input: string | null): boolean {
+    const link = input ? normalizeLink(input) : null;
+    if (input && input.trim() && !link) return false;
+    const sel = this.getSelectedElements();
+    if (!sel.length) return true;
+    this.scene.upsert(sel.map((e) => updateElement(e, { link: link ?? undefined })));
+    this.commitHistory();
+    return true;
+  }
+
+  openLink = (el: SketchElement): void => {
+    const link = el.link && normalizeLink(el.link);
+    if (link) window.open(link, '_blank', 'noopener,noreferrer');
+  };
+
+  /** Element whose link badge (top-right corner) is under this world point. */
+  linkBadgeAt = (world: Point): SketchElement | null => {
+    const badges = linkBadges(this.scene.getElements(), this.getViewport().zoom);
+    for (let i = badges.length - 1; i >= 0; i--) {
+      const r = badges[i].rect;
+      if (world.x >= r.x && world.x <= r.x + r.width && world.y >= r.y && world.y <= r.y + r.height) return badges[i].el;
+    }
+    return null;
+  };
+
+  private styleClipboard: Partial<SketchElement> | null = null;
+
+  /** Remembers the first selected element's look (colours, stroke, fill, font). */
+  copyStyles(): void {
+    const el = this.getSelectedElements()[0];
+    if (!el) return;
+    const keys = [...COMMON_STYLE_KEYS, 'fontSize', 'fontFamily', 'textAlign', 'fontWeight', 'fontStyle'] as const;
+    const style: Record<string, unknown> = {};
+    for (const k of keys) if (k in el) style[k] = (el as unknown as Record<string, unknown>)[k];
+    this.styleClipboard = style as Partial<SketchElement>;
+    this.toast('Styles copied');
+  }
+
+  hasCopiedStyles = (): boolean => this.styleClipboard !== null;
+
+  /** Applies copied styles to the selection (font settings only where the element has text). */
+  pasteStyles(): void {
+    const style = this.styleClipboard;
+    const sel = this.getSelectedElements().filter((e) => !e.locked);
+    if (!style || !sel.length) return;
+    this.scene.upsert(
+      sel.map((el) => {
+        const patch: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(style)) if ((COMMON_STYLE_KEYS as readonly string[]).includes(k) || (el.type === 'text' && k in el)) patch[k] = v;
+        return updateElement(el, patch as Partial<SketchElement>);
+      }),
+    );
+    if (sel.some((e) => e.type === 'text')) this.refreshTextMetrics();
     this.commitHistory();
   }
 
@@ -923,7 +1329,7 @@ export class Editor implements ToolContext {
   }
 
   deleteSelected(): void {
-    const sel = this.getSelectedElements().filter((e) => !e.locked);
+    const sel = withFrameChildren(this.scene.getElements(), this.getSelectedElements()).filter((e) => !e.locked);
     if (!sel.length) return;
     this.scene.upsert(sel.map((e) => updateElement(e, { isDeleted: true })));
     this.setSelection([]);
@@ -931,10 +1337,10 @@ export class Editor implements ToolContext {
   }
 
   duplicateSelected(offset: Point = { x: 16, y: 16 }): void {
-    const sel = this.getSelectedElements();
+    const sel = withFrameChildren(this.scene.getElements(), this.getSelectedElements()).sort((a, b) => a.zIndex - b.zIndex);
     if (!sel.length) return;
     let z = this.nextZIndex();
-    const clones = sel.map((e) => cloneElement(e, offset, z++));
+    const clones = remapCopies(sel, sel.map((e) => cloneElement(e, offset, z++)));
     this.scene.upsert(clones);
     this.setSelection(clones.map((c) => c.id));
     this.commitHistory();
@@ -946,9 +1352,11 @@ export class Editor implements ToolContext {
   }
 
   nudgeSelected(dx: number, dy: number): void {
-    const sel = this.getSelectedElements().filter((e) => !e.locked);
+    const sel = withFrameChildren(this.scene.getElements(), this.getSelectedElements()).filter((e) => !e.locked);
     if (!sel.length) return;
     this.scene.upsert(sel.map((e) => updateElement(e, { x: e.x + dx, y: e.y + dy })));
+    this.assignFrames(sel.map((e) => e.id), false);
+    this.rebindMoved(sel.map((e) => e.id));
     this.commitHistory();
   }
 
@@ -962,7 +1370,7 @@ export class Editor implements ToolContext {
 
   /** Reorders the selection using fractional z-indices (no need to rewrite other elements). */
   reorderSelected(direction: 'front' | 'back' | 'forward' | 'backward'): void {
-    const sel = this.getSelectedElements();
+    const sel = withLabels(this.scene.getElements(), this.getSelectedElements()).sort((a, b) => a.zIndex - b.zIndex);
     if (!sel.length) return;
     const ids = new Set(sel.map((e) => e.id));
     const all = this.scene.getElements();
@@ -996,7 +1404,7 @@ export class Editor implements ToolContext {
   }
 
   copySelected(cut = false): void {
-    const sel = this.getSelectedElements();
+    const sel = withFrameChildren(this.scene.getElements(), this.getSelectedElements()).sort((a, b) => a.zIndex - b.zIndex);
     if (!sel.length) return;
     this.clipboard = sel;
     const files = fileStore.pick(this.referencedFileIds(sel));
@@ -1044,8 +1452,12 @@ export class Editor implements ToolContext {
     const target = at ?? this.lastPointer ?? this.viewportCenter();
     const offset = { x: target.x - (b.x + b.width / 2), y: target.y - (b.y + b.height / 2) };
     let z = this.nextZIndex();
-    const clones = source.map((e) => cloneElement(e, offset, z++));
-    this.scene.upsert(clones);
+    const clones = remapCopies(source, source.map((e) => cloneElement(e, offset, z++)));
+    // a pasted child whose frame isn't on the board any more becomes free-standing
+    const frameIds = new Set([...clones, ...this.scene.getElements()].filter((e) => e.type === 'frame').map((e) => e.id));
+    this.scene.upsert(clones.map((c) => (c.frameId && !frameIds.has(c.frameId) ? { ...c, frameId: undefined } : c)));
+    this.assignFrames(clones.filter((c) => !c.frameId || !clones.some((o) => o.id === c.frameId)).map((c) => c.id), false);
+    this.syncLabels(clones.map((c) => c.id));
     this.setTool('selection');
     this.setSelection(clones.map((c) => c.id));
     this.commitHistory();
@@ -1221,6 +1633,7 @@ export class Editor implements ToolContext {
       viewport: !opts.keepViewport && a.viewport ? a.viewport : s.viewport,
       workspaceFile: opts.workspaceFile ?? null,
     }));
+    this.syncLabels(undefined, true);
     this.history.clear();
     shapeCache.prune(new Set(elements.map((e) => e.id)));
   }
@@ -1283,7 +1696,7 @@ export class Editor implements ToolContext {
         if (Math.abs(next.height - el.height) > 0.5) fixed.push({ ...el, ...next });
         continue;
       }
-      if (el.type !== 'text' || el.id === this.getState().editingTextId) continue;
+      if (el.type !== 'text' || el.id === this.getState().editingTextId || el.containerId) continue;
       const m = measureText(el.text || ' ', el.fontSize, el.fontFamily, el);
       if (Math.abs(m.width - el.width) > 0.5 || Math.abs(m.height - el.height) > 0.5) {
         // centred / right-aligned text keeps its anchor when a web font arrives
@@ -1292,6 +1705,7 @@ export class Editor implements ToolContext {
       }
     }
     if (fixed.length) this.scene.upsert(fixed, 'load');
+    this.syncLabels(undefined, true);
   }
 
   // ───────────────────────────── Images & clipboard ─────────────────────────────

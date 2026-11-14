@@ -2,7 +2,7 @@ import { LINE_HEIGHT } from '../../core/constants';
 import { pointInBounds } from '../../core/geometry';
 import type { Bounds, Point, TextElement } from '../../core/types';
 import type { ElementHandler, PointMapper, ShapeOutput } from '../ElementHandler';
-import { fontString, measureText } from '../textMetrics';
+import { fontString, measureText, wrapText } from '../textMetrics';
 import { fontCss } from '../../core/fonts';
 
 export class TextHandler implements ElementHandler<TextElement> {
@@ -31,7 +31,8 @@ export class TextHandler implements ElementHandler<TextElement> {
       drawables: [],
       paths: [],
       text: {
-        lines: el.text.split('\n'),
+        // shape labels wrap to the width of their shape
+        lines: el.containerId ? wrapText(el.text, el.width, el.fontSize, el.fontFamily, el) : el.text.split('\n'),
         fontSize: el.fontSize,
         font: fontString(el.fontSize, el.fontFamily, el),
         align: el.textAlign,

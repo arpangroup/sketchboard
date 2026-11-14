@@ -6,6 +6,7 @@ import { codeLayout, lineAt } from '../elements/code/codeLayout';
 import { angleOf, bakesRotation, centerOf, keepTopLeft, rotateAround, rotatePoint, toLocal } from '../elements/rotation';
 import { pointsToElementGeometry } from '../elements/handlers/pointShapes';
 import { elementRegistry, getElementBounds } from '../elements/registry';
+import { canHoldLabel } from '../elements/boundText';
 import { measureText } from '../elements/textMetrics';
 import { EMPTY_SET, type PointerInfo, type Tool, type ToolContext } from './Tool';
 import {
@@ -31,7 +32,7 @@ type Mode =
     }
   | { kind: 'resize'; handle: BoxHandle; startBounds: Bounds; originals: SketchElement[]; frame?: { pivot: Point; angle: number } }
   | { kind: 'rotate'; pivot: Point; start: number; originals: SketchElement[] }
-  | { kind: 'point'; index: number; original: LinearElement }
+  | { kind: 'point'; index: number; original: LinearElement; noBind?: boolean }
   | { kind: 'tail'; original: FigureElement }
   | { kind: 'marquee'; start: Point; current: Point; additiveBase: string[] }
   | { kind: 'tableLine'; axis: 'col' | 'row'; index: number; start: Point; original: TableElement };
@@ -55,6 +56,10 @@ export class SelectionTool implements Tool {
     const zoom = ctx.getViewport().zoom;
     const selected = ctx.getSelectedElements();
 
+    // link badge: open the link
+    const badge = ctx.linkBadgeAt(p.world);
+    if (badge) return ctx.openLink(badge);
+
     // 1. resize / endpoint handles
     const handle = hitHandle(selected, p.world, zoom);
     if (handle) return this.beginHandleDrag(handle, selected, p.world);
@@ -75,14 +80,20 @@ export class SelectionTool implements Tool {
     const selBounds = getSelectionBounds(selected);
     const insideMulti = selected.length > 1 && selBounds && pointInBounds(p.world, selBounds);
 
+    // Ctrl/Cmd+click follows an element's link
+    if (hit?.link && p.modKey) return ctx.openLink(hit);
+
     if (hit && !insideMulti) {
       const isSelected = !!ctx.getState().selectedIds[hit.id];
+      // a click picks the element's whole group
+      const members = ctx.expandToGroups([hit.id]);
       if (p.shiftKey) {
         const ids = Object.keys(ctx.getState().selectedIds);
-        ctx.setSelection(isSelected ? ids.filter((id) => id !== hit.id) : [...ids, hit.id]);
+        const drop = new Set(members);
+        ctx.setSelection(isSelected ? ids.filter((id) => !drop.has(id)) : [...new Set([...ids, ...members])]);
         if (isSelected) return;
       } else if (!isSelected) {
-        ctx.setSelection([hit.id]);
+        ctx.setSelection(members);
       }
     } else if (!insideMulti) {
       // 3. empty space: start marquee
@@ -92,7 +103,8 @@ export class SelectionTool implements Tool {
       return;
     }
 
-    const originals = ctx.getSelectedElements().filter((e) => !e.locked);
+    // frames carry their contents along
+    const originals = ctx.withFrameChildren(ctx.getSelectedElements()).filter((e) => !e.locked);
     if (originals.length === 0) return;
     // clicking a cell of an already-selected table edits it (on release, if it wasn't a drag)
     let cellClick: Extract<Mode, { kind: 'move' }>['cellClick'];
@@ -121,9 +133,18 @@ export class SelectionTool implements Tool {
   private beginHandleDrag(handle: HandleId, selected: SketchElement[], at: Point): void {
     const frame = getSelectionFrame(selected)!;
     if (handle === 'rotate') {
-      this.mode = { kind: 'rotate', pivot: frame.pivot, start: Math.atan2(at.y - frame.pivot.y, at.x - frame.pivot.x), originals: selected };
+      this.mode = { kind: 'rotate', pivot: frame.pivot, start: Math.atan2(at.y - frame.pivot.y, at.x - frame.pivot.x), originals: this.ctx.withFrameChildren(selected) };
     } else if (handle === 'tail') {
       this.mode = { kind: 'tail', original: selected[0] as FigureElement };
+    } else if (handle.startsWith('m')) {
+      // bend anchor: insert a new point here and drag it — the line curves through it
+      const line = selected[0] as LinearElement;
+      const i = Number(handle.slice(1));
+      const abs = line.points.map((q) => ({ x: q.x + line.x, y: q.y + line.y }));
+      abs.splice(i + 1, 0, at);
+      const bent = updateElement(line, pointsToElementGeometry(abs) as Partial<LinearElement>);
+      this.ctx.scene.upsert([bent]);
+      this.mode = { kind: 'point', index: i + 1, original: bent };
     } else if (handle.startsWith('p')) {
       this.mode = { kind: 'point', index: Number(handle.slice(1)), original: selected[0] as LinearElement };
     } else {
@@ -132,7 +153,8 @@ export class SelectionTool implements Tool {
         handle: handle as BoxHandle,
         // a single rotated element resizes in its own (turned) frame
         startBounds: frame.angle ? frame.box : getSelectionBounds(selected)!,
-        originals: selected,
+        // labels aren't scaled with their shape — they re-wrap to its new size
+        originals: selected.filter((e) => !(e.type === 'text' && e.containerId && selected.some((b) => b.id === e.containerId))),
         frame: frame.angle ? { pivot: frame.pivot, angle: frame.angle } : undefined,
       };
     }
@@ -215,13 +237,15 @@ export class SelectionTool implements Tool {
       return updateElement(current, patch);
     });
     this.ctx.scene.upsert(updates);
+    this.ctx.syncLabels(m.originals.map((e) => e.id));
   }
 
   /** Rotation handle: turns the selection around its centre (Shift snaps to 15°). */
   private rotate(m: Extract<Mode, { kind: 'rotate' }>, p: PointerInfo): void {
     let delta = Math.atan2(p.world.y - m.pivot.y, p.world.x - m.pivot.x) - m.start;
     const step = Math.PI / 12;
-    const single = m.originals.length === 1 && !bakesRotation(m.originals[0]) ? m.originals[0] : null;
+    const shapes = m.originals.filter((e) => !(e.type === 'text' && e.containerId)); // labels just ride along
+    const single = shapes.length === 1 && !bakesRotation(shapes[0]) ? shapes[0] : null;
     if (p.shiftKey) {
       // snap the element's final angle (single) or the turn (group) to 15° steps
       const base = single ? angleOf(single) : 0;
@@ -238,7 +262,7 @@ export class SelectionTool implements Tool {
     const abs = orig.points.map((pt) => ({ x: pt.x + orig.x, y: pt.y + orig.y }));
     let target = p.world;
     if (p.shiftKey) {
-      const anchor = abs[m.index === 0 ? 1 : 0];
+      const anchor = abs[m.index === 0 ? 1 : m.index - 1];
       const dx = target.x - anchor.x;
       const dy = target.y - anchor.y;
       const step = Math.PI / 12;
@@ -248,7 +272,12 @@ export class SelectionTool implements Tool {
     }
     abs[m.index] = target;
     const current = this.ctx.scene.getElement(orig.id) ?? orig;
-    this.ctx.scene.upsert([updateElement(current, pointsToElementGeometry(abs) as Partial<LinearElement>)]);
+    // dragging an end: it comes free while it moves, and the shape it would attach to lights up
+    const isEnd = m.index === 0 || m.index === orig.points.length - 1;
+    const free = isEnd ? (m.index === 0 ? { startBinding: undefined } : { endBinding: undefined }) : {};
+    this.ctx.scene.upsert([updateElement(current, { ...(pointsToElementGeometry(abs) as Partial<LinearElement>), ...free })]);
+    m.noBind = p.modKey;
+    if (isEnd) this.ctx.setBindingHint(p.modKey ? null : (this.ctx.bindingTargetAt(p.world, [orig.id])?.id ?? null));
   }
 
   /** Drags a callout's tail tip (stored relative to the body so it survives resizing). */
@@ -298,7 +327,7 @@ export class SelectionTool implements Tool {
       .getElements()
       .filter((e) => boundsContains(rect, getElementBounds(e)))
       .map((e) => e.id);
-    this.ctx.setSelection([...new Set([...m.additiveBase, ...inside])]);
+    this.ctx.setSelection([...new Set([...m.additiveBase, ...this.ctx.expandToGroups(inside)])]);
     this.ctx.requestRender();
   }
 
@@ -311,12 +340,38 @@ export class SelectionTool implements Tool {
       if (m.codeLineClick) this.ctx.toggleCodeLine(m.codeLineClick.id, m.codeLineClick.line);
       return;
     }
+    this.ctx.setBindingHint(null);
+    if (m.kind === 'point' && m.noBind !== undefined && (m.index === 0 || m.index === m.original.points.length - 1)) {
+      this.ctx.bindArrow(m.original.id, m.index === 0 ? 'start' : 'end', !m.noBind);
+    }
+    if (m.kind === 'move' && m.moved) this.ctx.rebindMoved(m.originals.map((e) => e.id));
+    if (m.kind === 'move' || m.kind === 'resize' || m.kind === 'rotate') {
+      // dropped into / dragged out of a frame (or a frame was resized around things)
+      const framed = m.originals.some((e) => e.type === 'frame');
+      this.ctx.assignFrames(framed ? this.ctx.scene.getElements().map((e) => e.id) : m.originals.map((e) => e.id), false);
+    }
     if (m.kind !== 'idle' && m.kind !== 'marquee') this.ctx.commitHistory();
   }
 
   /** Double-click edits a text element, or drops a new text label on empty canvas. */
   onDoubleClick(p: PointerInfo): void {
+    // double-click a bend point of a selected line: remove it (the line straightens there)
+    const selected = this.ctx.getSelectedElements();
+    const handle = hitHandle(selected, p.world, this.ctx.getViewport().zoom);
+    const line = selected.length === 1 && (selected[0].type === 'line' || selected[0].type === 'arrow') ? selected[0] : null;
+    if (line && !line.locked && handle?.startsWith('p')) {
+      const i = Number(handle.slice(1));
+      if (i > 0 && i < line.points.length - 1) {
+        const abs = line.points.filter((_, k) => k !== i).map((q) => ({ x: q.x + line.x, y: q.y + line.y }));
+        this.ctx.scene.upsert([updateElement(line, pointsToElementGeometry(abs) as Partial<LinearElement>)]);
+        this.ctx.commitHistory();
+      }
+      return;
+    }
     const hit = this.ctx.hitTest(p.world);
+    // inside a rectangle / ellipse / diamond / gallery shape (filled or not): type its centred label
+    const shape = hit && canHoldLabel(hit) ? hit : !hit || hit.type === 'frame' ? this.ctx.labelShapeAt(p.world) : null;
+    if (shape && !shape.locked) return this.ctx.editLabel(shape);
     if (hit) {
       if (hit.type === 'text' && !hit.locked) this.ctx.startTextEditing(hit.id);
       if (hit.type === 'code' && !hit.locked) this.ctx.startCodeEditing(hit.id);
@@ -339,11 +394,12 @@ export class SelectionTool implements Tool {
   }
 
   private updateHoverCursor(p: PointerInfo): void {
+    if (this.ctx.linkBadgeAt(p.world)) return this.ctx.setCursor('pointer');
     const selected = this.ctx.getSelectedElements();
     const handle = hitHandle(selected, p.world, this.ctx.getViewport().zoom);
     if (handle) {
       const angle = getSelectionFrame(selected)?.angle ?? 0;
-      this.ctx.setCursor(handle === 'tail' ? 'crosshair' : handle === 'rotate' ? 'grab' : handle.startsWith('p') ? 'pointer' : handleCursor(handle as BoxHandle, angle));
+      this.ctx.setCursor(handle === 'tail' ? 'crosshair' : handle === 'rotate' ? 'grab' : handle.startsWith('p') || handle.startsWith('m') ? 'pointer' : handleCursor(handle as BoxHandle, angle));
       return;
     }
     const table = this.singleTable(selected);

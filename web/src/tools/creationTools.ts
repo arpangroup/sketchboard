@@ -145,6 +145,27 @@ export class LinearTool extends DragCreateTool<LinearElement> {
     const end = p.shiftKey ? snapAngle(o, p.world) : p.world;
     return pointsToElementGeometry([o, end]);
   }
+
+  // Arrow binding: ends that start or finish on a shape attach to it (hold Ctrl/Cmd to keep them free).
+  private noBind = false;
+
+  onPointerMove(p: PointerInfo, isDown: boolean): void {
+    super.onPointerMove(p, isDown);
+    this.noBind = p.modKey;
+    const exclude = this.elementId ? [this.elementId] : [];
+    this.ctx.setBindingHint(p.modKey ? null : (this.ctx.bindingTargetAt(p.world, exclude)?.id ?? null));
+  }
+
+  onPointerUp(p?: PointerInfo): void {
+    const id = this.elementId;
+    this.ctx.setBindingHint(null);
+    if (id) this.ctx.bindArrow(id, 'both', !(p?.modKey ?? this.noBind));
+    super.onPointerUp(p);
+  }
+
+  onDeactivate(): void {
+    this.ctx.setBindingHint(null);
+  }
 }
 
 /**
