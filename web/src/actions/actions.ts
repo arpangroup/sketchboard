@@ -1,6 +1,6 @@
 import type { DialogId, ToolType } from '../core/types';
 import type { Editor } from '../editor/Editor';
-import { openSceneFile, saveExcalidrawFile, saveSceneToFile } from '../persistence/fileService';
+import { fileNameFor, openSceneFile, saveExcalidrawFile, saveSceneToFile } from '../persistence/fileService';
 import { describeImport } from '../persistence/importScene';
 import { STORAGE_KEYS } from '../core/constants';
 
@@ -417,14 +417,15 @@ export const ACTIONS: Action[] = [
     label: 'Save to file',
     shortcut: 'Ctrl+S',
     keyTest: (e) => mod(e) && !e.shiftKey && key(e, 's'),
-    perform: (ed) => saveSceneToFile(ed.getSceneData(false, true)),
+    perform: (ed) => saveSceneToFile(ed.getSceneData(false, true), fileNameFor(ed.getState().pageSetup)),
   },
   {
     id: 'saveExcalidraw',
     label: 'Save as Excalidraw file',
     perform: (ed) => {
-      saveExcalidrawFile(ed.getSceneData(false, true));
-      ed.toast('Saved drawing.excalidraw — open it at excalidraw.com');
+      const name = fileNameFor(ed.getState().pageSetup);
+      saveExcalidrawFile(ed.getSceneData(false, true), name);
+      ed.toast(`Saved ${name}.excalidraw — open it at excalidraw.com`);
     },
   },
   {

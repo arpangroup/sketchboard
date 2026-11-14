@@ -3,7 +3,7 @@ import type { ColorMode } from '../../../core/types';
 import { exportToPngBlob } from '../../../export/pngExport';
 import { elementsForScope, type ExportScope, resolveRegion } from '../../../export/region';
 import { exportToSvg } from '../../../export/svgExport';
-import { downloadBlob, saveExcalidrawFile, saveSceneToFile } from '../../../persistence/fileService';
+import { downloadBlob, fileNameFor, saveExcalidrawFile, saveSceneToFile } from '../../../persistence/fileService';
 import { COLOR_MODE_OPTIONS } from '../../../renderer/colorModes';
 import { useAppState, useEditor } from '../../EditorContext';
 import { Field, Modal, Segmented } from './Modal';
@@ -23,7 +23,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   const [colorMode, setColorMode] = useState<ColorMode>('color');
   const [background, setBackground] = useState(true);
   const [scale, setScale] = useState(2);
-  const [name, setName] = useState('drawing');
+  const [name, setName] = useState(() => fileNameFor(pageSetup));
 
   const { elements, region } = useMemo(() => {
     const els = elementsForScope(scope, editor.scene.getElements(), selectedIds);

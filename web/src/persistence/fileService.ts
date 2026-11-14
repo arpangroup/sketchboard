@@ -1,5 +1,5 @@
 import { FILE_EXTENSION, MIME_TYPE } from '../core/constants';
-import type { SceneData } from '../core/types';
+import type { PageSetup, SceneData } from '../core/types';
 import { EXCALIDRAW_EXTENSION, EXCALIDRAW_MIME, toExcalidraw } from './excalidraw';
 import { type ImportedScene, parseAnyScene, SCENE_FILE_ACCEPT } from './importScene';
 
@@ -13,6 +13,31 @@ export function downloadBlob(blob: Blob, filename: string): void {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+export const DEFAULT_FILE_NAME = 'drawing';
+
+/**
+ * File name from a document title: characters files can't hold (\ / : * ? " < > | and control
+ * characters) and runs of spaces become single hyphens.
+ * "Design Social Media | Feed Generation" → "Design-Social-Media-Feed-Generation".
+ * No usable title → "drawing".
+ */
+export function fileNameFromTitle(title: string | undefined): string {
+  const name = (title ?? '')
+    .normalize('NFC')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 100)
+    .replace(/[-.]+$/, '');
+  return name || DEFAULT_FILE_NAME;
+}
+
+/** Name for saved files: the document title when pages are used, otherwise "drawing". */
+export const fileNameFor = (setup: PageSetup): string =>
+  setup.size === 'infinite' ? DEFAULT_FILE_NAME : fileNameFromTitle(setup.title);
 
 export function saveSceneToFile(data: SceneData, name = 'drawing'): void {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: MIME_TYPE });

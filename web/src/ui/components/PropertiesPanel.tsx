@@ -283,9 +283,28 @@ export function PropertiesPanel() {
       {has('arrow') && (
         <Section title="Arrowheads">
           <div className="sb-arrowheads">
-            <ButtonGroup value={v('startArrowhead')} onChange={(startArrowhead) => set({ startArrowhead })}
-              options={arrowheads.map((o) => ({ ...o, icon: <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}>{o.icon}</span> }))} />
-            <ButtonGroup value={v('endArrowhead')} onChange={(endArrowhead) => set({ endArrowhead })} options={arrowheads} />
+            <div className="sb-arrowheads__row">
+              <span className="sb-arrowheads__label">Start</span>
+              <ButtonGroup value={v('startArrowhead')} onChange={(startArrowhead) => set({ startArrowhead })}
+                options={arrowheads.map((o) => ({ ...o, label: `Start: ${o.label}`, icon: <span style={{ display: 'inline-flex', transform: 'scaleX(-1)' }}>{o.icon}</span> }))} />
+            </div>
+            <div className="sb-arrowheads__row">
+              <span className="sb-arrowheads__label">End</span>
+              <ButtonGroup value={v('endArrowhead')} onChange={(endArrowhead) => set({ endArrowhead })}
+                options={arrowheads.map((o) => ({ ...o, label: `End: ${o.label}` }))} />
+            </div>
+            <button
+              className="sb-btn sb-btn--sm sb-arrowheads__swap"
+              onClick={() => {
+                const start = v('startArrowhead');
+                const end = v('endArrowhead');
+                if (start !== undefined && end !== undefined) set({ startArrowhead: end, endArrowhead: start });
+              }}
+              title="Swap the start and end arrowheads"
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 7h13l-4-4M17 17H4l4 4" /></svg>
+              Swap ends
+            </button>
           </div>
         </Section>
       )}
@@ -365,7 +384,17 @@ export function PropertiesPanel() {
 
       {codeEl && <CodeSection key={codeEl.id} el={codeEl} />}
 
-      <Section title="Opacity">
+      <Section
+        title={
+          v('opacity') !== undefined && Number(v('opacity')) < 100 ? (
+            <>
+              Opacity <span className="sb-props__value">{v('opacity')}%</span>
+            </>
+          ) : (
+            'Opacity'
+          )
+        }
+      >
         <input
           className="sb-range"
           type="range"
@@ -886,7 +915,7 @@ function FrameSection({ frame }: { frame: Extract<SketchElement, { type: 'frame'
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, children }: { title: ReactNode; children: ReactNode }) {
   return (
     <section className="sb-props__section">
       <h3>{title}</h3>
