@@ -270,6 +270,8 @@ export interface CurrentStyle extends ElementStyle {
   startArrowhead: Arrowhead;
   endArrowhead: Arrowhead;
   highlightColor: string;
+  /** Colour of the words inside shapes (labels), set apart from the shape's outline colour. */
+  textColor?: string;
 }
 
 export type ToolType =

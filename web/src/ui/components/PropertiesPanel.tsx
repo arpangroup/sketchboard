@@ -9,6 +9,7 @@ import { Icons } from '../icons/Icons';
 import { FIGURE_CATEGORIES, FIGURES } from '../../elements/figures/figures';
 import { bakesRotation } from '../../elements/rotation';
 import { LASER_SIZES } from '../../renderer/LaserLayer';
+import { withLabels } from '../../elements/boundText';
 
 interface Option<T> {
   value: T;
@@ -105,9 +106,21 @@ export function PropertiesPanel() {
   const compact = useIsCompact();
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  const selected = editor.getSelectedElements();
+  // a selected shape's label counts too, so its font, size and colour can be changed from here
+  const picked = editor.getSelectedElements();
+  const selected = withLabels(editor.scene.getElements(), picked);
   const editingEl = editingId ? editor.scene.getElement(editingId) : undefined;
-  const subjects = selected.length ? selected : editingEl ? [editingEl] : [];
+  const editingBox = editingEl?.type === 'text' && editingEl.containerId ? editor.scene.getElement(editingEl.containerId) : undefined;
+  const subjects = selected.length
+    ? selected
+    : editingBox && !editingBox.isDeleted
+      ? withLabels(editor.scene.getElements(), [editingBox])
+      : editingEl
+        ? [editingEl]
+        : [];
+  const labelText = subjects.find((e) => e.type === 'text' && e.containerId);
+  // words inside a shape get their own colour row (the Stroke row colours the shape's outline)
+  const showTextColor = !!labelText && subjects.some((e) => e.type !== 'text');
   const types = new Set<ElementType>(
     subjects.length ? subjects.map((e) => e.type) : TOOL_TO_TYPE[tool] ? [TOOL_TO_TYPE[tool]!] : [],
   );
@@ -290,6 +303,11 @@ export function PropertiesPanel() {
               }))}
             />
           </Section>
+          {showTextColor && (
+            <Section title="Text colour">
+              <ColorRow label="Text colour" colors={STROKE_COLORS} value={labelText!.strokeColor} onChange={(c) => set({ textColor: c })} />
+            </Section>
+          )}
           <Section title="Font">
             <FontPicker value={v('fontFamily')} onChange={(fontFamily) => set({ fontFamily })} />
           </Section>
@@ -360,11 +378,11 @@ export function PropertiesPanel() {
         />
       </Section>
 
-      {selected.length === 1 && selected[0].type === 'frame' && <FrameSection frame={selected[0]} />}
+      {picked.length === 1 && picked[0].type === 'frame' && <FrameSection frame={picked[0]} />}
 
-      {selected.length > 0 && !selected.every((e) => e.locked) && <RotationSection selected={selected} />}
+      {picked.length > 0 && !picked.every((e) => e.locked) && <RotationSection selected={picked} />}
 
-      {selected.length > 0 && (
+      {picked.length > 0 && (
         <Section title="Layers & actions">
           <div className="sb-btn-group">
             <IconBtn label="Send to back" onClick={() => actions.execute('sendToBack')}><Icons.back /></IconBtn>
@@ -374,16 +392,16 @@ export function PropertiesPanel() {
             {actions.isEnabled('ungroup') ? (
               <IconBtn label="Ungroup (Ctrl+Shift+G)" onClick={() => actions.execute('ungroup')}><Icons.ungroup /></IconBtn>
             ) : (
-              selected.length > 1 && <IconBtn label="Group (Ctrl+G)" onClick={() => actions.execute('group')}><Icons.group /></IconBtn>
+              picked.length > 1 && <IconBtn label="Group (Ctrl+G)" onClick={() => actions.execute('group')}><Icons.group /></IconBtn>
             )}
-            {selected.some((e) => e.type !== 'frame') && (
+            {picked.some((e) => e.type !== 'frame') && (
               <IconBtn label="Wrap in frame (Shift+F)" onClick={() => actions.execute('wrapInFrame')}><Icons.frame /></IconBtn>
             )}
             <IconBtn label="Flip horizontal (Shift+H)" onClick={() => actions.execute('flipHorizontal')}><Icons.flipH /></IconBtn>
             <IconBtn label="Flip vertical (Shift+V)" onClick={() => actions.execute('flipVertical')}><Icons.flipV /></IconBtn>
-            <IconBtn label={selected.some((e) => e.link) ? 'Edit link (Ctrl+K)' : 'Add link (Ctrl+K)'} onClick={() => actions.execute('hyperlink')}><Icons.link /></IconBtn>
-            <IconBtn label={selected.every((e) => e.locked) ? 'Unlock' : 'Lock'} onClick={() => actions.execute('lock')}>
-              {selected.every((e) => e.locked) ? <Icons.lock /> : <Icons.unlock />}
+            <IconBtn label={picked.some((e) => e.link) ? 'Edit link (Ctrl+K)' : 'Add link (Ctrl+K)'} onClick={() => actions.execute('hyperlink')}><Icons.link /></IconBtn>
+            <IconBtn label={picked.every((e) => e.locked) ? 'Unlock' : 'Lock'} onClick={() => actions.execute('lock')}>
+              {picked.every((e) => e.locked) ? <Icons.lock /> : <Icons.unlock />}
             </IconBtn>
             <IconBtn label="Delete" onClick={() => actions.execute('delete')}><Icons.trash /></IconBtn>
           </div>

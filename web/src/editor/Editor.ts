@@ -645,12 +645,24 @@ export class Editor implements ToolContext {
   updateStyle(patch: Partial<CurrentStyle>): void {
     if (patch.fontFamily) void ensureFontLoaded(patch.fontFamily, patch.fontWeight, patch.fontStyle);
     this.setState((s) => ({ currentStyle: { ...s.currentStyle, ...patch } }));
-    // a selected shape's label takes the text settings (font, size, colour…) too
-    const selected = withLabels(this.scene.getElements(), this.getSelectedElements());
+    // targets: the selection — or the text being typed — plus the labels inside selected shapes
+    const editing = this.getState().editingTextId;
+    const direct = this.getSelectedElements();
+    const typing = editing ? this.scene.getElement(editing) : undefined;
+    // typing a shape's label acts like having the shape selected (same panel, same result)
+    const typingIn = typing?.type === 'text' && typing.containerId ? this.scene.getElement(typing.containerId) : undefined;
+    const own = direct.length ? direct : typingIn && !typingIn.isDeleted ? [typingIn] : typing ? [typing] : [];
+    const selected = withLabels(this.scene.getElements(), own);
     if (!selected.length) return;
+    const ownIds = new Set(own.map((e) => e.id));
     const updates = selected.map((el) => {
       const p: Record<string, unknown> = {};
-      for (const k of COMMON_STYLE_KEYS) if (k in patch) p[k] = patch[k];
+      // a shape's label takes its shape's text settings and opacity, but keeps its own colour
+      // (set that with "Text colour"), so recolouring the outline doesn't recolour the words
+      const viaShape = !ownIds.has(el.id);
+      for (const k of COMMON_STYLE_KEYS) if (k in patch && (!viaShape || k === 'opacity')) p[k] = patch[k];
+      if (viaShape && patch.textColor) p.strokeColor = patch.textColor;
+      if (!viaShape && el.type === 'text' && patch.textColor) p.strokeColor = patch.textColor;
       if (el.type === 'freedraw' && el.kind === 'highlighter') {
         delete p.strokeColor; // highlighters use the highlight palette
         if (patch.highlightColor) p.strokeColor = patch.highlightColor;
