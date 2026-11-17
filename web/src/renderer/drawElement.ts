@@ -94,11 +94,16 @@ export function drawElement(
   ctx.restore();
 }
 
+/** CSS font for one formatted piece of a text block. */
+export const runFont = (t: TextPrimitive, bold: boolean, italic: boolean): string =>
+  `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} ${t.fontSize}px ${t.family}`;
+
 function drawTextBlock(ctx: CanvasRenderingContext2D, t: TextPrimitive, ox: number, oy: number): void {
-  ctx.font = t.font;
   ctx.fillStyle = t.color;
-  ctx.textAlign = t.align;
   ctx.textBaseline = 'alphabetic';
+  if (t.rich) return drawRichText(ctx, t, ox, oy);
+  ctx.font = t.font;
+  ctx.textAlign = t.align;
   const x = ox + textAnchorX(t);
   t.lines.forEach((line, i) => {
     const y = oy + textBaselineY(t, i);
@@ -108,5 +113,25 @@ function drawTextBlock(ctx: CanvasRenderingContext2D, t: TextPrimitive, ox: numb
       const start = t.align === 'center' ? x - w / 2 : t.align === 'right' ? x - w : x;
       ctx.fillRect(start, y + t.fontSize * 0.12, w, Math.max(1, t.fontSize / 16));
     }
+  });
+}
+
+/** Lines of differently formatted pieces, drawn one after another from the aligned start of each line. */
+function drawRichText(ctx: CanvasRenderingContext2D, t: TextPrimitive, ox: number, oy: number): void {
+  ctx.textAlign = 'left';
+  t.rich!.forEach((line, i) => {
+    const y = oy + textBaselineY(t, i);
+    const widths = line.map((f) => {
+      ctx.font = runFont(t, f.bold, f.italic);
+      return ctx.measureText(f.text).width;
+    });
+    const total = widths.reduce((a, b) => a + b, 0);
+    let x = ox + (t.align === 'center' ? (t.width - total) / 2 : t.align === 'right' ? t.width - total : 0);
+    line.forEach((f, k) => {
+      ctx.font = runFont(t, f.bold, f.italic);
+      ctx.fillText(f.text, x, y);
+      if (f.underline && f.text.trim()) ctx.fillRect(x, y + t.fontSize * 0.12, widths[k], Math.max(1, t.fontSize / 16));
+      x += widths[k];
+    });
   });
 }

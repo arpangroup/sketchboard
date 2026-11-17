@@ -1,6 +1,6 @@
 import { LINE_HEIGHT } from '../core/constants';
 import type { SketchElement, TextElement } from '../core/types';
-import { wrapText } from './textMetrics';
+import { wrappedLineCount } from './textMetrics';
 
 /**
  * Shape labels ("bound text"): a text element with `containerId` that sits centred in its shape,
@@ -22,8 +22,7 @@ export function labelWidth(container: SketchElement): number {
 /** Position, size and turn of a label for its shape: centred, wrapped to the shape's width. */
 export function layoutLabel(text: TextElement, container: SketchElement): Pick<TextElement, 'x' | 'y' | 'width' | 'height' | 'angle'> {
   const width = labelWidth(container);
-  const lines = wrapText(text.text || ' ', width, text.fontSize, text.fontFamily, text);
-  const height = Math.ceil(lines.length * text.fontSize * LINE_HEIGHT);
+  const height = Math.ceil(wrappedLineCount(text, width) * text.fontSize * LINE_HEIGHT);
   const cx = container.x + container.width / 2;
   const cy = container.y + container.height / 2;
   return { x: cx - width / 2, y: cy - height / 2, width, height, angle: container.angle || undefined };

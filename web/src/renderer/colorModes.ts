@@ -80,11 +80,10 @@ class GrayscaleTransformer implements ColorTransformer {
 /**
  * Pure black & white, ideal for laser printers / photocopies:
  *  - every stroke and text becomes black
- *  - fills become black hatching, graded by how light the colour is, so text on top stays readable:
- *      white (≥ 250)            → stays white (it's covering something, e.g. a toggle knob)
- *      near-white tint (≥ 228)  → no fill (paper-like backgrounds: notes, class boxes, cards)
- *      pastel (≥ 150)           → light, sparse hatching
- *      strong colour            → normal hatching (solid fills become hatching too)
+ *  - solid fills (any colour) print as plain white paper: no hatching behind text. White still
+ *    covers what's underneath, so overlapping shapes keep their order
+ *  - a fill drawn as a pattern on purpose (hachure, cross-hatch, dots…) keeps that pattern, in black,
+ *    lighter for pale colours
  *  - background becomes white
  */
 export const BW_WHITE = 250;
@@ -107,15 +106,12 @@ class BlackWhiteTransformer implements ColorTransformer {
     }
     const base = { ...el, strokeColor: '#000000', opacity: 100 };
     if (isTransparent(el.backgroundColor)) return { ...base, backgroundColor: 'transparent' };
+    // solid fills → white paper (no hatching behind text)
+    if (el.fillStyle === 'solid') return { ...base, backgroundColor: '#ffffff', fillStyle: 'solid' };
+    // a pattern fill the user chose stays a pattern, in black; near-white ones are left blank
     const l = luminance(el.backgroundColor);
-    if (l >= BW_WHITE) return { ...base, backgroundColor: '#ffffff', fillStyle: 'solid' };
     if (l >= BW_TINT) return { ...base, backgroundColor: 'transparent' };
-    return {
-      ...base,
-      backgroundColor: '#000000',
-      fillStyle: el.fillStyle === 'solid' ? 'hachure' : el.fillStyle,
-      ...(l >= BW_PASTEL ? { fillDensity: 'light' as const } : {}),
-    };
+    return { ...base, backgroundColor: '#000000', ...(l >= BW_PASTEL ? { fillDensity: 'light' as const } : {}) };
   }
 
   background = () => '#ffffff';

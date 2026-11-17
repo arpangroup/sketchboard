@@ -179,6 +179,14 @@ export interface BinaryFile {
   created: number;
 }
 
+/** A piece of a text box with its own formatting (see TextElement.runs). */
+export interface TextRun {
+  text: string;
+  b?: boolean;
+  i?: boolean;
+  u?: boolean;
+}
+
 export interface TextElement extends BaseElement {
   type: 'text';
   text: string;
@@ -188,6 +196,12 @@ export interface TextElement extends BaseElement {
   fontWeight: FontWeight;
   fontStyle: FontStyle;
   underline: boolean;
+  /**
+   * Formatting of parts of the text: pieces in order whose texts join up to `text`. A piece's
+   * b / i / u override the box's own bold / italic / underline (unset = same as the box).
+   * Ignored if the pieces no longer spell out `text`.
+   */
+  runs?: TextRun[];
   /**
    * Fixed-width text box: the text wraps onto new lines at `width` (set by dragging a side handle).
    * Unset = the box grows to fit its longest line.

@@ -32,7 +32,8 @@ function signature(el: SketchElement, mode: ColorMode): string {
       parts.push(el.startArrowhead, el.endArrowhead, el.polygon, el.sharp);
       break;
     case 'text':
-      parts.push(el.text, el.fontSize, el.fontFamily, el.textAlign, el.fontWeight, el.fontStyle, el.underline);
+      parts.push(el.text, el.fontSize, el.fontFamily, el.textAlign, el.fontWeight, el.fontStyle, el.underline, el.fixedWidth, !!el.containerId);
+      if (el.runs) parts.push(JSON.stringify(el.runs)); // bold / italic / underlined words
       break;
     case 'freedraw':
       parts.push(el.kind);

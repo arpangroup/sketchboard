@@ -1,3 +1,4 @@
+import type { StyledRun } from './textMetrics';
 import type { Drawable } from 'roughjs/bin/core';
 import type { RoughGenerator } from 'roughjs/bin/generator';
 import type { Bounds, Point, SketchElement, TextAlign } from '../core/types';
@@ -36,6 +37,8 @@ export interface TextPrimitive {
   family: string;
   fontWeight: 'normal' | 'bold';
   fontStyle: 'normal' | 'italic';
+  /** Lines made of differently formatted pieces (bold / italic / underlined words); `lines` holds the same text. */
+  rich?: StyledRun[][];
 }
 
 /**

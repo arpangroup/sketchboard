@@ -13,6 +13,7 @@ import type {
   TableDefaults,
   TableElement,
   TextElement,
+  TextRun,
   LinearElement,
   ToolType,
   Viewport,
@@ -60,7 +61,7 @@ import { LaserLayer } from '../renderer/LaserLayer';
 import { STORAGE_KEYS } from '../core/constants';
 import { ensureFontLoaded } from '../core/fonts';
 import { getElementBounds, hitTestElement } from '../elements/registry';
-import { textBoxSize } from '../elements/textMetrics';
+import { normalizeRuns, textBoxSize } from '../elements/textMetrics';
 import { contentBounds } from '../export/region';
 import { getPageBounds } from '../page/pageSizes';
 import { MAX_PAGES, type PageDecoration, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
@@ -738,8 +739,16 @@ export class Editor implements ToolContext {
           fontStyle: patch.fontStyle ?? el.fontStyle,
           underline: patch.underline ?? el.underline,
         };
-        const m = textBoxSize({ ...el, ...next });
-        Object.assign(p, next, { width: m.width, height: m.height });
+        // the whole box set bold / italic / underline: words formatted differently follow it
+        const runs = el.runs?.map((r) => ({
+          ...r,
+          b: patch.fontWeight !== undefined ? undefined : r.b,
+          i: patch.fontStyle !== undefined ? undefined : r.i,
+          u: patch.underline !== undefined ? undefined : r.u,
+        }));
+        const tidy = runs ? normalizeRuns(runs, { ...el, ...next }) : undefined;
+        const m = textBoxSize({ ...el, ...next, runs: tidy });
+        Object.assign(p, next, { width: m.width, height: m.height, runs: tidy });
       }
       return updateElement(el, anchored(el, p as Partial<SketchElement>));
     });
@@ -769,20 +778,31 @@ export class Editor implements ToolContext {
     this.setState({ editingTextId: id, selectedIds: {} });
   };
 
-  updateEditingText(text: string): void {
+  /** Typed text, with the formatting of its parts (bold words…) when the editor has any. */
+  updateEditingText(text: string, runs?: TextRun[]): void {
     const id = this.getState().editingTextId;
     const el = id ? (this.scene.getElement(id) as TextElement | undefined) : undefined;
     if (!el) return;
+    const tidy = runs ? normalizeRuns(runs, el) : undefined;
     const box = el.containerId ? this.scene.getElement(el.containerId) : undefined;
     if (box && !box.isDeleted) {
-      this.scene.upsert([updateElement(el, { text, ...layoutLabel({ ...el, text }, box) })]);
+      this.scene.upsert([updateElement(el, { text, runs: tidy, ...layoutLabel({ ...el, text, runs: tidy }, box) })]);
       return;
     }
-    const m = textBoxSize({ ...el, text });
+    const m = textBoxSize({ ...el, text, runs: tidy });
     // keep alignment anchor stable while typing (a fixed-width box keeps its width and grows down)
     const dx = el.textAlign === 'center' ? (el.width - m.width) / 2 : el.textAlign === 'right' ? el.width - m.width : 0;
-    this.scene.upsert([updateElement(el, anchored(el, { text, width: m.width, height: m.height, x: el.x + dx }))]);
+    this.scene.upsert([updateElement(el, anchored(el, { text, runs: tidy, width: m.width, height: m.height, x: el.x + dx }))]);
   }
+
+  /**
+   * The text editor registers this to format the words selected in it; it returns false when nothing
+   * is selected there (then Bold / Italic / Underline apply to the whole box).
+   */
+  private formatSelection: ((kind: 'bold' | 'italic' | 'underline') => boolean) | null = null;
+  setSelectionFormatter = (fn: ((kind: 'bold' | 'italic' | 'underline') => boolean) | null): void => {
+    this.formatSelection = fn;
+  };
 
   finishTextEditing(): void {
     const id = this.getState().editingTextId;
@@ -1732,6 +1752,8 @@ export class Editor implements ToolContext {
   /** Ctrl/Cmd+B, I, U - works while typing and on selected text elements. */
   toggleTextFormat(kind: 'bold' | 'italic' | 'underline'): void {
     const editing = this.getState().editingTextId;
+    // words selected in the text editor: format just those
+    if (editing && this.formatSelection?.(kind)) return;
     const targets = editing ? [editing] : this.getSelectedElements().filter((e) => e.type === 'text').map((e) => e.id);
     const first = targets.length ? (this.scene.getElement(targets[0]) as TextElement) : undefined;
     const s = first ?? this.getState().currentStyle;

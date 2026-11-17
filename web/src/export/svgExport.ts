@@ -78,6 +78,24 @@ export function elementsToSvgMarkup(elements: readonly SketchElement[], mode: Co
 
 function textBlockToSvg(t: TextPrimitive, ox: number, oy: number): string {
   const anchor = t.align === 'center' ? 'middle' : t.align === 'right' ? 'end' : 'start';
+  if (t.rich) {
+    // one <text> per line, one <tspan> per formatted piece (the anchor aligns the whole line)
+    return t.rich
+      .map((line, i) => {
+        const spans = line
+          .map(
+            (f) =>
+              `<tspan${f.bold ? ' font-weight="bold"' : ' font-weight="normal"'}${f.italic ? ' font-style="italic"' : ' font-style="normal"'}` +
+              `${f.underline ? ' text-decoration="underline"' : ''}>${esc(f.text)}</tspan>`,
+          )
+          .join('');
+        return (
+          `<text x="${n(ox + textAnchorX(t))}" y="${n(oy + textBaselineY(t, i))}" font-family="${esc(t.family)}"` +
+          ` font-size="${t.fontSize}" fill="${t.color}" text-anchor="${anchor}" style="white-space:pre">${spans}</text>`
+        );
+      })
+      .join('');
+  }
   const fmt =
     (t.fontWeight === 'bold' ? ' font-weight="bold"' : '') +
     (t.fontStyle === 'italic' ? ' font-style="italic"' : '') +

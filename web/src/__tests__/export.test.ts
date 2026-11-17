@@ -21,21 +21,25 @@ describe('page sizes', () => {
 describe('colour modes', () => {
   const el = { ...createShape('rectangle', DEFAULT_STYLE, { x: 0, y: 0 }, 1), strokeColor: '#e03131', backgroundColor: '#a5d8ff', fillStyle: 'solid' as const };
 
-  it('black & white makes strokes black and turns solid fills into hatching', () => {
+  it('black & white makes strokes black and prints solid fills as plain white (no hatching)', () => {
     const bw = getColorTransformer('blackwhite').transformElement(el);
     expect(bw.strokeColor).toBe('#000000');
-    expect(bw.backgroundColor).toBe('#000000');
-    expect(bw.fillStyle).toBe('hachure');
+    expect(bw).toMatchObject({ backgroundColor: '#ffffff', fillStyle: 'solid' });
+    // every solid colour, pale or strong, prints white — nothing hatched behind text
+    for (const c of ['#fff9db', '#a5d8ff', '#ffc9c9', '#b2f2bb', '#1971c2', '#000000']) {
+      const out = getColorTransformer('blackwhite').transformElement({ ...el, backgroundColor: c, fillStyle: 'solid' });
+      expect(out).toMatchObject({ backgroundColor: '#ffffff', fillStyle: 'solid' });
+      expect(out.fillDensity).toBeUndefined();
+    }
   });
 
-  it('black & white grades fills so text on pale shapes stays readable', () => {
-    const bw = (backgroundColor: string) => getColorTransformer('blackwhite').transformElement({ ...el, backgroundColor, fillStyle: 'solid' });
-    expect(bw('#fff9db')).toMatchObject({ backgroundColor: 'transparent' }); // near-white tint (UML class box) → paper
-    expect(bw('#ffffff')).toMatchObject({ backgroundColor: '#ffffff', fillStyle: 'solid' }); // white mask stays white
-    expect(bw('#a5d8ff')).toMatchObject({ backgroundColor: '#000000', fillStyle: 'hachure', fillDensity: 'light' }); // pastel → light hatching
+  it('black & white keeps a pattern fill the user chose, lighter for pale colours', () => {
+    const bw = (backgroundColor: string) => getColorTransformer('blackwhite').transformElement({ ...el, backgroundColor, fillStyle: 'hachure' });
+    expect(bw('#a5d8ff')).toMatchObject({ backgroundColor: '#000000', fillStyle: 'hachure', fillDensity: 'light' });
     const strong = bw('#1971c2');
-    expect(strong).toMatchObject({ backgroundColor: '#000000', fillStyle: 'hachure' }); // strong colour → normal hatching
+    expect(strong).toMatchObject({ backgroundColor: '#000000', fillStyle: 'hachure' });
     expect(strong.fillDensity).toBe(undefined);
+    expect(bw('#fff9db')).toMatchObject({ backgroundColor: 'transparent' }); // near-white pattern → blank
   });
 
   it('grayscale keeps perceived brightness', () => {

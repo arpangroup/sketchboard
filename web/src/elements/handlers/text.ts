@@ -2,7 +2,7 @@ import { LINE_HEIGHT } from '../../core/constants';
 import { pointInBounds } from '../../core/geometry';
 import type { Bounds, Point, TextElement } from '../../core/types';
 import type { ElementHandler, PointMapper, ShapeOutput } from '../ElementHandler';
-import { fontString, textBoxLines, textBoxSize, wrapText } from '../textMetrics';
+import { fontString, layoutRuns, styledRuns, textBoxLines, textBoxSize, wrapText } from '../textMetrics';
 import { fontCss } from '../../core/fonts';
 
 export class TextHandler implements ElementHandler<TextElement> {
@@ -36,12 +36,22 @@ export class TextHandler implements ElementHandler<TextElement> {
   }
 
   generateShape(el: TextElement): ShapeOutput {
+    // shape labels and fixed-width boxes wrap at their width; formatted parts are laid out piece by piece
+    const wrapAt = el.containerId || el.fixedWidth ? el.width : null;
+    const styled = styledRuns(el);
+    const rich = styled ? layoutRuns(styled, wrapAt, el.fontSize, el.fontFamily).lines : undefined;
     return {
       drawables: [],
       paths: [],
       text: {
-        // shape labels wrap to the width of their shape
-        lines: el.containerId ? wrapText(el.text, el.width, el.fontSize, el.fontFamily, el) : el.fixedWidth ? textBoxLines(el) : el.text.split('\n'),
+        lines: rich
+          ? rich.map((l) => l.map((f) => f.text).join(''))
+          : el.containerId
+            ? wrapText(el.text, el.width, el.fontSize, el.fontFamily, el)
+            : el.fixedWidth
+              ? textBoxLines(el)
+              : el.text.split('\n'),
+        rich,
         fontSize: el.fontSize,
         font: fontString(el.fontSize, el.fontFamily, el),
         align: el.textAlign,

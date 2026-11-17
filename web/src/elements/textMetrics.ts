@@ -1,6 +1,6 @@
 import { LINE_HEIGHT } from '../core/constants';
 import { fontCss } from '../core/fonts';
-import type { FontFamily, FontStyle, FontWeight } from '../core/types';
+import type { FontFamily, FontStyle, FontWeight, TextRun } from '../core/types';
 
 export interface TextFormat {
   fontWeight?: FontWeight;
@@ -75,20 +75,181 @@ export interface TextBoxLike extends TextFormat {
   fontFamily: FontFamily;
   width: number;
   fixedWidth?: boolean;
+  underline?: boolean;
+  runs?: TextRun[];
+}
+
+// ───────────────────────────── Rich text (bold / italic / underline on parts) ─────────────────────────────
+
+/** A piece of text with its formatting worked out (the box's own style plus the piece's overrides). */
+export interface StyledRun {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+}
+
+/** The box's pieces with their real formatting, or null when the whole box looks the same. */
+export function styledRuns(t: TextBoxLike): StyledRun[] | null {
+  const runs = t.runs;
+  if (!runs?.length || runs.map((r) => r.text).join('') !== t.text) return null;
+  if (!runs.some((r) => r.b !== undefined || r.i !== undefined || r.u !== undefined)) return null;
+  const bold = t.fontWeight === 'bold';
+  const italic = t.fontStyle === 'italic';
+  const underline = !!t.underline;
+  return runs.map((r) => ({ text: r.text, bold: r.b ?? bold, italic: r.i ?? italic, underline: r.u ?? underline }));
+}
+
+/** Tidies pieces: joins neighbours that look the same, drops empty ones, and drops overrides that match the box. */
+export function normalizeRuns(runs: readonly TextRun[], base: TextBoxLike): TextRun[] | undefined {
+  const bold = base.fontWeight === 'bold';
+  const italic = base.fontStyle === 'italic';
+  const underline = !!base.underline;
+  const out: TextRun[] = [];
+  for (const r of runs) {
+    if (!r.text) continue;
+    const run: TextRun = { text: r.text };
+    if (r.b !== undefined && r.b !== bold) run.b = r.b;
+    if (r.i !== undefined && r.i !== italic) run.i = r.i;
+    if (r.u !== undefined && r.u !== underline) run.u = r.u;
+    const last = out[out.length - 1];
+    if (last && last.b === run.b && last.i === run.i && last.u === run.u) last.text += run.text;
+    else out.push(run);
+  }
+  return out.some((r) => r.b !== undefined || r.i !== undefined || r.u !== undefined) ? out : undefined;
+}
+
+/** Width of a piece in its own font. */
+function runWidth(text: string, fontSize: number, family: FontFamily, bold: boolean, italic: boolean): number {
+  const c = context();
+  if (!c) return text.length * fontSize * (bold ? 0.6 : 0.55);
+  c.font = fontString(fontSize, family, { fontWeight: bold ? 'bold' : 'normal', fontStyle: italic ? 'italic' : 'normal' });
+  return c.measureText(text).width;
+}
+
+export interface RichLayout {
+  lines: StyledRun[][];
+  widths: number[];
+}
+
+/**
+ * Lays out formatted pieces into lines: breaks at new lines, and — with `maxWidth` — wraps at word
+ * boundaries (a word wider than the line is split), measuring each piece in its own font.
+ */
+export function layoutRuns(runs: readonly StyledRun[], maxWidth: number | null, fontSize: number, family: FontFamily): RichLayout {
+  const w = (r: StyledRun, text = r.text) => runWidth(text, fontSize, family, r.bold, r.italic);
+  // split into paragraphs of "tokens": spaces and words, each a list of pieces
+  type Tok = { space: boolean; frags: StyledRun[] };
+  const paragraphs: Tok[][] = [[]];
+  for (const run of runs) {
+    run.text.split('\n').forEach((chunk, ci) => {
+      if (ci > 0) paragraphs.push([]);
+      const para = paragraphs[paragraphs.length - 1];
+      for (const part of chunk.split(/( +)/)) {
+        if (!part) continue;
+        const space = part.startsWith(' ');
+        const frag = { ...run, text: part };
+        const last = para[para.length - 1];
+        if (last && last.space === space) last.frags.push(frag); // a word carrying on in another style
+        else para.push({ space, frags: [frag] });
+      }
+    });
+  }
+  const lines: StyledRun[][] = [];
+  const widths: number[] = [];
+  const limit = maxWidth === null ? Infinity : Math.max(fontSize, maxWidth);
+  const tokWidth = (t: Tok) => t.frags.reduce((s, f) => s + w(f), 0);
+  for (const para of paragraphs) {
+    let line: StyledRun[] = [];
+    let lineW = 0;
+    let pendingSpace: Tok | null = null;
+    const flush = () => {
+      lines.push(line);
+      widths.push(lineW);
+      line = [];
+      lineW = 0;
+    };
+    for (const tok of para) {
+      if (tok.space) {
+        pendingSpace = tok;
+        continue;
+      }
+      const spaceW = pendingSpace && line.length ? tokWidth(pendingSpace) : 0;
+      const wordW = tokWidth(tok);
+      if (lineW + spaceW + wordW <= limit || !line.length) {
+        if (pendingSpace && (line.length || maxWidth === null)) {
+          line.push(...pendingSpace.frags);
+          lineW += tokWidth(pendingSpace);
+        }
+        if (wordW <= limit || maxWidth === null) {
+          line.push(...tok.frags);
+          lineW += wordW;
+        } else {
+          // a word wider than the line: split it character by character
+          for (const f of tok.frags) {
+            for (const ch of f.text) {
+              const cw = w(f, ch);
+              if (lineW + cw > limit && line.length) flush();
+              line.push({ ...f, text: ch });
+              lineW += cw;
+            }
+          }
+        }
+      } else {
+        flush();
+        line.push(...tok.frags);
+        lineW = wordW;
+      }
+      pendingSpace = null;
+    }
+    if (pendingSpace && maxWidth === null) {
+      line.push(...pendingSpace.frags);
+      lineW += tokWidth(pendingSpace);
+    }
+    flush();
+  }
+  // join neighbouring pieces with the same look
+  const merged = lines.map((l) =>
+    l.reduce<StyledRun[]>((acc, f) => {
+      const last = acc[acc.length - 1];
+      if (last && last.bold === f.bold && last.italic === f.italic && last.underline === f.underline) last.text += f.text;
+      else acc.push({ ...f });
+      return acc;
+    }, []),
+  );
+  return { lines: merged, widths };
 }
 
 /** Lines a text box shows: wrapped at its width when it has a fixed width, else as typed. */
-export const textBoxLines = (t: TextBoxLike): string[] =>
-  t.fixedWidth ? wrapText(t.text || ' ', t.width, t.fontSize, t.fontFamily, t) : (t.text || ' ').split('\n');
+export const textBoxLines = (t: TextBoxLike): string[] => {
+  const rich = styledRuns(t);
+  if (rich) return layoutRuns(rich, t.fixedWidth ? t.width : null, t.fontSize, t.fontFamily).lines.map((l) => l.map((f) => f.text).join(''));
+  return t.fixedWidth ? wrapText(t.text || ' ', t.width, t.fontSize, t.fontFamily, t) : (t.text || ' ').split('\n');
+};
 
 /**
  * Size of a text box. Auto-width boxes fit their longest line; fixed-width boxes keep their width
- * and grow downwards as the text wraps.
+ * and grow downwards as the text wraps. Formatted parts are measured in their own font.
  */
 export function textBoxSize(t: TextBoxLike): { width: number; height: number } {
+  const rich = styledRuns(t);
+  if (rich) {
+    const l = layoutRuns(rich, t.fixedWidth ? t.width : null, t.fontSize, t.fontFamily);
+    return {
+      width: t.fixedWidth ? t.width : Math.ceil(Math.max(1, ...l.widths)),
+      height: Math.ceil(l.lines.length * t.fontSize * LINE_HEIGHT),
+    };
+  }
   if (!t.fixedWidth) {
     const m = measureText(t.text || ' ', t.fontSize, t.fontFamily, t);
     return { width: m.width, height: m.height };
   }
   return { width: t.width, height: Math.ceil(textBoxLines(t).length * t.fontSize * LINE_HEIGHT) };
+}
+
+/** Number of lines a box's text takes when wrapped at `width` (shape labels). */
+export function wrappedLineCount(t: TextBoxLike, width: number): number {
+  const rich = styledRuns(t);
+  if (rich) return layoutRuns(rich, width, t.fontSize, t.fontFamily).lines.length;
+  return wrapText(t.text || ' ', width, t.fontSize, t.fontFamily, t).length;
 }

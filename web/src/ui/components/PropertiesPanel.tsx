@@ -348,13 +348,13 @@ export function PropertiesPanel() {
           </Section>
           <Section title="Format">
             <div className="sb-btn-group">
-              <Toggle label="Bold (Ctrl+B)" active={v('fontWeight') === 'bold'} onClick={() => set({ fontWeight: v('fontWeight') === 'bold' ? 'normal' : 'bold' })}>
+              <Toggle label="Bold (Ctrl+B)" active={v('fontWeight') === 'bold'} onClick={() => (editor.getState().editingTextId ? editor.toggleTextFormat('bold') : set({ fontWeight: v('fontWeight') === 'bold' ? 'normal' : 'bold' }))}>
                 <b className="sb-txt">B</b>
               </Toggle>
-              <Toggle label="Italic (Ctrl+I)" active={v('fontStyle') === 'italic'} onClick={() => set({ fontStyle: v('fontStyle') === 'italic' ? 'normal' : 'italic' })}>
+              <Toggle label="Italic (Ctrl+I)" active={v('fontStyle') === 'italic'} onClick={() => (editor.getState().editingTextId ? editor.toggleTextFormat('italic') : set({ fontStyle: v('fontStyle') === 'italic' ? 'normal' : 'italic' }))}>
                 <i className="sb-txt sb-serif">I</i>
               </Toggle>
-              <Toggle label="Underline (Ctrl+U)" active={!!v('underline')} onClick={() => set({ underline: !v('underline') })}>
+              <Toggle label="Underline (Ctrl+U)" active={!!v('underline')} onClick={() => (editor.getState().editingTextId ? editor.toggleTextFormat('underline') : set({ underline: !v('underline') }))}>
                 <u className="sb-txt">U</u>
               </Toggle>
             </div>
@@ -796,7 +796,15 @@ const HEADER_COLORS = ['transparent', '#e7f5ff', '#ebfbee', '#fff9db', '#fff0f6'
 
 function Toggle(p: { label: string; active: boolean; onClick: () => void; children: ReactNode }) {
   return (
-    <button className={`sb-opt ${p.active ? 'is-active' : ''}`} title={p.label} aria-label={p.label} aria-pressed={p.active} onClick={p.onClick}>
+    <button
+      className={`sb-opt ${p.active ? 'is-active' : ''}`}
+      title={p.label}
+      aria-label={p.label}
+      aria-pressed={p.active}
+      // keep the text editor's selection: B / I / U can then format just the selected words
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={p.onClick}
+    >
       {p.children}
     </button>
   );

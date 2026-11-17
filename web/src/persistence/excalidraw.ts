@@ -2,6 +2,7 @@ import { LINE_HEIGHT } from '../core/constants';
 import { generateId, randomInteger } from '../core/utils';
 import type {
   ArrowBinding,
+  TextRun,
   Arrowhead,
   BinaryFile,
   CodeElement,
@@ -123,6 +124,19 @@ const num = (v: unknown, fallback = 0) => (typeof v === 'number' && Number.isFin
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const str = (v: unknown, fallback: string, max = 100_000) => (typeof v === 'string' ? v.slice(0, max) : fallback);
 const color = (v: unknown, fallback: string) => (typeof v === 'string' && v.length < 64 ? v : fallback);
+/** Formatted pieces from a file: only kept when they're well-formed and spell out the text exactly. */
+function runsFrom(raw: unknown, text: string): TextRun[] | undefined {
+  if (!Array.isArray(raw) || raw.length > 5000) return undefined;
+  const runs: TextRun[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object' || typeof r.text !== 'string') return undefined;
+    const run: TextRun = { text: r.text };
+    for (const k of ['b', 'i', 'u'] as const) if (typeof r[k] === 'boolean') run[k] = r[k];
+    runs.push(run);
+  }
+  return runs.map((r) => r.text).join('') === text && runs.some((r) => r.b !== undefined || r.i !== undefined || r.u !== undefined) ? runs : undefined;
+}
+
 /** Excalidraw binding → ours: a fixed point pins the spot, otherwise the end aims at the centre. */
 function bindingFromEx(b: unknown): ArrowBinding | undefined {
   if (!b || typeof b !== 'object' || typeof (b as ExEl).elementId !== 'string') return undefined;
@@ -402,8 +416,10 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
         const fontFamily = typeof tag?.fontFamily === 'string' ? tag.fontFamily.slice(0, 60) : (FONT_FROM_EX[num(e.fontFamily, 5)] ?? 'hand');
         const fontSize = clamp(num(e.fontSize, 20), 4, 400);
         const textAlign: TextAlign = ALIGNS.has(e.textAlign) ? e.textAlign : 'left';
-        const m = fixed
-          ? textBoxSize({ text, fontSize, fontFamily, ...fmt, width: Math.abs(num(e.width)), fixedWidth: true })
+        // bold / italic / underlined words, kept in SketchBoard's own data (Excalidraw shows plain text)
+        const runs = runsFrom(tag?.runs, text);
+        const m = fixed || runs
+          ? textBoxSize({ text, fontSize, fontFamily, ...fmt, runs, width: Math.abs(num(e.width)), fixedWidth: fixed })
           : measureText(text, fontSize, fontFamily, fmt);
         // keep the text where Excalidraw showed it: anchored by alignment horizontally, centred vertically
         const ex = num(e.x);
@@ -425,6 +441,7 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
           ...(angle ? { angle } : {}),
           ...(bound ? { containerId: bound } : {}),
           ...(fixed ? { fixedWidth: true } : {}),
+          ...(runs ? { runs } : {}),
         });
         break;
       }
@@ -660,7 +677,9 @@ export function toExcalidraw(
             containerId: bound,
             lineHeight: LINE_HEIGHT,
             autoResize: !el.fixedWidth,
-            customData: { sketchboard: { fontFamily: el.fontFamily, fontWeight: el.fontWeight, fontStyle: el.fontStyle, underline: el.underline } },
+            customData: {
+              sketchboard: { fontFamily: el.fontFamily, fontWeight: el.fontWeight, fontStyle: el.fontStyle, underline: el.underline, ...(el.runs ? { runs: el.runs } : {}) },
+            },
           }),
         );
         break;
