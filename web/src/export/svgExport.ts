@@ -86,7 +86,7 @@ function textBlockToSvg(t: TextPrimitive, ox: number, oy: number): string {
           .map(
             (f) =>
               `<tspan${f.bold ? ' font-weight="bold"' : ' font-weight="normal"'}${f.italic ? ' font-style="italic"' : ' font-style="normal"'}` +
-              `${f.underline ? ' text-decoration="underline"' : ''}>${esc(f.text)}</tspan>`,
+              `${f.underline ? ' text-decoration="underline"' : ''}${f.color ? ` fill="${esc(f.color)}"` : ''}>${esc(f.text)}</tspan>`,
           )
           .join('');
         return (

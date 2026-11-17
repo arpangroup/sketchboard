@@ -60,3 +60,38 @@ describe('bold / italic / underlined words', () => {
     expect(back.runs).toEqual(boldUserA);
   });
 });
+
+describe('coloured words', () => {
+  const red = [{ text: 'Only ' }, { text: 'User A', b: true, c: '#e03131' }, { text: ' owns the lock' }];
+
+  it('keeps a word colour that differs from the box, and drops one that matches', () => {
+    expect(normalizeRuns(red, el())).toEqual(red);
+    expect(normalizeRuns([{ text: 'x', c: '#1E1E1E' }], el({ strokeColor: '#1e1e1e' }))).toBeUndefined();
+    const s = styledRuns(el({ runs: red }))!;
+    expect(s.map((r) => r.color)).toEqual([undefined, '#e03131', undefined]);
+  });
+
+  it('draws coloured words as their own pieces, in SVG too', () => {
+    const t = el({ runs: red });
+    const shape = elementRegistry.get(t).generateShape(t, {} as never);
+    expect(shape.text?.rich?.[0][1]).toMatchObject({ text: 'User A', color: '#e03131', bold: true });
+    const svg = exportToSvg([t], { region: { x: 0, y: 0, width: 400, height: 40 }, colorMode: 'color', background: false, embedFonts: false });
+    expect(svg).toContain('fill="#e03131">User A</tspan>');
+  });
+
+  it('prints word colours black in black & white and grey in grayscale', async () => {
+    const { getColorTransformer } = await import('../renderer/colorModes');
+    const t = el({ runs: red });
+    const bw = getColorTransformer('blackwhite').transformElement(t) as TextElement;
+    expect(bw.runs!.every((r) => r.c === undefined)).toBe(true);
+    expect(bw.runs![1].b).toBe(true); // bold survives
+    const gray = getColorTransformer('grayscale').transformElement(t) as TextElement;
+    expect(gray.runs![1].c).toMatch(/^#([0-9a-f]{2})\1\1$/);
+  });
+
+  it('keeps word colours through an Excalidraw file', () => {
+    const out = toExcalidraw([el({ runs: red })]);
+    const back = fromExcalidraw(JSON.parse(JSON.stringify(out))).scene.elements[0] as TextElement;
+    expect(back.runs).toEqual(red);
+  });
+});

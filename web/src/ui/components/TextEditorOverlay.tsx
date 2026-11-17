@@ -3,9 +3,9 @@ import { LINE_HEIGHT } from '../../core/constants';
 import { fontCss } from '../../core/fonts';
 import type { TextElement, TextRun } from '../../core/types';
 import { styledRuns } from '../../elements/textMetrics';
+import type { SelectionFormat } from '../../editor/Editor';
 import { useAppState, useEditor, useSceneRevision } from '../EditorContext';
 
-type Format = 'bold' | 'italic' | 'underline';
 
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -20,6 +20,7 @@ function toHtml(el: TextElement): string {
       if (r.bold !== bold) h = r.bold ? `<b>${h}</b>` : `<span style="font-weight:normal">${h}</span>`;
       if (r.italic !== italic) h = r.italic ? `<i>${h}</i>` : `<span style="font-style:normal">${h}</span>`;
       if (r.underline && !el.underline) h = `<u>${h}</u>`;
+      if (r.color) h = `<span style="color:${escapeHtml(r.color)}">${h}</span>`;
       return h;
     })
     .join('');
@@ -31,6 +32,15 @@ function toHtml(el: TextElement): string {
  * Reads the editor back: plain text plus its formatted pieces. Each piece's look comes from the
  * browser's computed style, so <b>, <strong>, style="font-weight…" and nesting all read correctly.
  */
+/** "rgb(224, 49, 49)" → "#e03131" (keeps an alpha as #rrggbbaa). */
+function cssToHex(css: string): string {
+  const m = css.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+%?))?/);
+  if (!m) return css;
+  const h = (v: number) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0');
+  const alpha = m[4] === undefined ? 1 : m[4].endsWith('%') ? Number.parseFloat(m[4]) / 100 : Number.parseFloat(m[4]);
+  return `#${h(+m[1])}${h(+m[2])}${h(+m[3])}${alpha < 1 ? h(alpha * 255) : ''}`;
+}
+
 function readEditor(root: HTMLElement): { text: string; runs: TextRun[] } {
   const runs: TextRun[] = [];
   let text = '';
@@ -39,14 +49,17 @@ function readEditor(root: HTMLElement): { text: string; runs: TextRun[] } {
   while (last?.lastChild) last = last.lastChild;
   const trailingBr = last?.nodeName === 'BR' ? last : null;
 
+  const rootColor = getComputedStyle(root).color;
   const styleOf = (el: Element) => {
     const cs = getComputedStyle(el);
+    // a colour different from the box's own is these words' colour
+    const color = cs.color !== rootColor ? cssToHex(cs.color) : undefined;
     let underline = false;
     for (let a: Element | null = el; a && a !== root.parentElement; a = a.parentElement) {
       if (getComputedStyle(a).textDecorationLine.includes('underline')) underline = true;
     }
     const weight = Number.parseInt(cs.fontWeight, 10);
-    return { b: (Number.isFinite(weight) ? weight : 400) >= 600, i: cs.fontStyle !== 'normal', u: underline };
+    return { b: (Number.isFinite(weight) ? weight : 400) >= 600, i: cs.fontStyle !== 'normal', u: underline, ...(color ? { c: color } : {}) };
   };
   const push = (t: string, el: Element) => {
     if (!t) return;
@@ -105,12 +118,18 @@ export function TextEditorOverlay() {
   // Bold / Italic / Underline on the words selected here (from the keyboard or the panel)
   useEffect(() => {
     if (!editingId) return;
-    editor.setSelectionFormatter((kind: Format) => {
+    editor.setSelectionFormatter((f: SelectionFormat) => {
       const root = ref.current;
       const sel = window.getSelection();
       if (!root || !sel || sel.isCollapsed || !root.contains(sel.anchorNode) || !root.contains(sel.focusNode)) return false;
-      document.execCommand('styleWithCSS', false, 'false');
-      document.execCommand(kind); // fires "input", which saves the change
+      // these fire "input", which saves the change
+      if (f.kind === 'color') {
+        document.execCommand('styleWithCSS', false, 'true');
+        document.execCommand('foreColor', false, f.value);
+      } else {
+        document.execCommand('styleWithCSS', false, 'false');
+        document.execCommand(f.kind);
+      }
       return true;
     });
     return () => editor.setSelectionFormatter(null);

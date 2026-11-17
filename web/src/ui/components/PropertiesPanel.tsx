@@ -59,6 +59,8 @@ function ColorRow(p: { colors: string[]; value: string; onChange: (c: string) =>
           title={c === 'transparent' ? 'Transparent' : c}
           className={`sb-swatch ${p.value === c ? 'is-active' : ''} ${c === 'transparent' ? 'is-transparent' : ''}`}
           style={{ background: c === 'transparent' ? undefined : c }}
+          // keep the text editor's selection, so a swatch can colour just the selected words
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => p.onChange(c)}
         />
       ))}

@@ -76,6 +76,8 @@ export interface TextBoxLike extends TextFormat {
   width: number;
   fixedWidth?: boolean;
   underline?: boolean;
+  /** The box's text colour (pieces with their own colour override it). */
+  strokeColor?: string;
   runs?: TextRun[];
 }
 
@@ -87,17 +89,22 @@ export interface StyledRun {
   bold: boolean;
   italic: boolean;
   underline: boolean;
+  /** Own colour; unset = the box's colour. */
+  color?: string;
 }
+
+const hasOverride = (r: TextRun) => r.b !== undefined || r.i !== undefined || r.u !== undefined || r.c !== undefined;
+const sameColor = (a?: string, b?: string) => (a ?? '').toLowerCase() === (b ?? '').toLowerCase();
 
 /** The box's pieces with their real formatting, or null when the whole box looks the same. */
 export function styledRuns(t: TextBoxLike): StyledRun[] | null {
   const runs = t.runs;
   if (!runs?.length || runs.map((r) => r.text).join('') !== t.text) return null;
-  if (!runs.some((r) => r.b !== undefined || r.i !== undefined || r.u !== undefined)) return null;
+  if (!runs.some(hasOverride)) return null;
   const bold = t.fontWeight === 'bold';
   const italic = t.fontStyle === 'italic';
   const underline = !!t.underline;
-  return runs.map((r) => ({ text: r.text, bold: r.b ?? bold, italic: r.i ?? italic, underline: r.u ?? underline }));
+  return runs.map((r) => ({ text: r.text, bold: r.b ?? bold, italic: r.i ?? italic, underline: r.u ?? underline, ...(r.c ? { color: r.c } : {}) }));
 }
 
 /** Tidies pieces: joins neighbours that look the same, drops empty ones, and drops overrides that match the box. */
@@ -112,11 +119,12 @@ export function normalizeRuns(runs: readonly TextRun[], base: TextBoxLike): Text
     if (r.b !== undefined && r.b !== bold) run.b = r.b;
     if (r.i !== undefined && r.i !== italic) run.i = r.i;
     if (r.u !== undefined && r.u !== underline) run.u = r.u;
+    if (r.c && !sameColor(r.c, base.strokeColor)) run.c = r.c;
     const last = out[out.length - 1];
-    if (last && last.b === run.b && last.i === run.i && last.u === run.u) last.text += run.text;
+    if (last && last.b === run.b && last.i === run.i && last.u === run.u && sameColor(last.c, run.c)) last.text += run.text;
     else out.push(run);
   }
-  return out.some((r) => r.b !== undefined || r.i !== undefined || r.u !== undefined) ? out : undefined;
+  return out.some(hasOverride) ? out : undefined;
 }
 
 /** Width of a piece in its own font. */
@@ -212,7 +220,7 @@ export function layoutRuns(runs: readonly StyledRun[], maxWidth: number | null, 
   const merged = lines.map((l) =>
     l.reduce<StyledRun[]>((acc, f) => {
       const last = acc[acc.length - 1];
-      if (last && last.bold === f.bold && last.italic === f.italic && last.underline === f.underline) last.text += f.text;
+      if (last && last.bold === f.bold && last.italic === f.italic && last.underline === f.underline && sameColor(last.color, f.color)) last.text += f.text;
       else acc.push({ ...f });
       return acc;
     }, []),

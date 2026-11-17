@@ -98,6 +98,9 @@ const COMMON_STYLE_KEYS = [
  * coordinates them. React components only talk to this class (and never to each other),
  * keeping UI and engine decoupled. It implements ToolContext so tools get a narrow API.
  */
+/** Formatting the text editor can apply to the words selected in it. */
+export type SelectionFormat = { kind: 'bold' | 'italic' | 'underline' } | { kind: 'color'; value: string };
+
 export class Editor implements ToolContext {
   readonly store = new Store<AppState>(createInitialAppState());
   readonly scene = new Scene();
@@ -687,6 +690,9 @@ export class Editor implements ToolContext {
 
   /** Updates the "current item" style AND every selected element. */
   updateStyle(patch: Partial<CurrentStyle>): void {
+    // a colour picked while words are selected in the text editor colours just those words
+    const wordColor = patch.textColor ?? patch.strokeColor;
+    if (wordColor && Object.keys(patch).length === 1 && this.getState().editingTextId && this.formatSelection?.({ kind: 'color', value: wordColor })) return;
     if (patch.fontFamily) void ensureFontLoaded(patch.fontFamily, patch.fontWeight, patch.fontStyle);
     this.setState((s) => ({ currentStyle: { ...s.currentStyle, ...patch } }));
     // targets: the selection — or the text being typed — plus the labels inside selected shapes
@@ -707,6 +713,10 @@ export class Editor implements ToolContext {
       for (const k of COMMON_STYLE_KEYS) if (k in patch && (!viaShape || k === 'opacity')) p[k] = patch[k];
       if (viaShape && patch.textColor) p.strokeColor = patch.textColor;
       if (!viaShape && el.type === 'text' && patch.textColor) p.strokeColor = patch.textColor;
+      // the whole text recoloured: words with their own colour take the new one too
+      if (el.type === 'text' && p.strokeColor !== undefined && el.runs?.some((r) => r.c)) {
+        p.runs = normalizeRuns(el.runs.map((r) => ({ ...r, c: undefined })), { ...el, strokeColor: p.strokeColor as string });
+      }
       if (el.type === 'freedraw' && el.kind === 'highlighter') {
         delete p.strokeColor; // highlighters use the highlight palette
         if (patch.highlightColor) p.strokeColor = patch.highlightColor;
@@ -740,13 +750,13 @@ export class Editor implements ToolContext {
           underline: patch.underline ?? el.underline,
         };
         // the whole box set bold / italic / underline: words formatted differently follow it
-        const runs = el.runs?.map((r) => ({
+        const runs = ((p.runs as TextRun[] | undefined) ?? el.runs)?.map((r) => ({
           ...r,
           b: patch.fontWeight !== undefined ? undefined : r.b,
           i: patch.fontStyle !== undefined ? undefined : r.i,
           u: patch.underline !== undefined ? undefined : r.u,
         }));
-        const tidy = runs ? normalizeRuns(runs, { ...el, ...next }) : undefined;
+        const tidy = runs ? normalizeRuns(runs, { ...el, ...next, strokeColor: (p.strokeColor as string | undefined) ?? el.strokeColor }) : undefined;
         const m = textBoxSize({ ...el, ...next, runs: tidy });
         Object.assign(p, next, { width: m.width, height: m.height, runs: tidy });
       }
@@ -799,8 +809,8 @@ export class Editor implements ToolContext {
    * The text editor registers this to format the words selected in it; it returns false when nothing
    * is selected there (then Bold / Italic / Underline apply to the whole box).
    */
-  private formatSelection: ((kind: 'bold' | 'italic' | 'underline') => boolean) | null = null;
-  setSelectionFormatter = (fn: ((kind: 'bold' | 'italic' | 'underline') => boolean) | null): void => {
+  private formatSelection: ((f: SelectionFormat) => boolean) | null = null;
+  setSelectionFormatter = (fn: ((f: SelectionFormat) => boolean) | null): void => {
     this.formatSelection = fn;
   };
 
@@ -1753,7 +1763,7 @@ export class Editor implements ToolContext {
   toggleTextFormat(kind: 'bold' | 'italic' | 'underline'): void {
     const editing = this.getState().editingTextId;
     // words selected in the text editor: format just those
-    if (editing && this.formatSelection?.(kind)) return;
+    if (editing && this.formatSelection?.({ kind })) return;
     const targets = editing ? [editing] : this.getSelectedElements().filter((e) => e.type === 'text').map((e) => e.id);
     const first = targets.length ? (this.scene.getElement(targets[0]) as TextElement) : undefined;
     const s = first ?? this.getState().currentStyle;

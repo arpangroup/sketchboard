@@ -185,6 +185,8 @@ export interface TextRun {
   b?: boolean;
   i?: boolean;
   u?: boolean;
+  /** Colour of these words (unset = the box's text colour). */
+  c?: string;
 }
 
 export interface TextElement extends BaseElement {
@@ -198,7 +200,7 @@ export interface TextElement extends BaseElement {
   underline: boolean;
   /**
    * Formatting of parts of the text: pieces in order whose texts join up to `text`. A piece's
-   * b / i / u override the box's own bold / italic / underline (unset = same as the box).
+   * b / i / u / c override the box's own bold / italic / underline / colour (unset = same as the box).
    * Ignored if the pieces no longer spell out `text`.
    */
   runs?: TextRun[];

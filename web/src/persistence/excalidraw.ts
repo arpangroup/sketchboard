@@ -132,9 +132,11 @@ function runsFrom(raw: unknown, text: string): TextRun[] | undefined {
     if (!r || typeof r !== 'object' || typeof r.text !== 'string') return undefined;
     const run: TextRun = { text: r.text };
     for (const k of ['b', 'i', 'u'] as const) if (typeof r[k] === 'boolean') run[k] = r[k];
+    if (typeof r.c === 'string' && /^#[0-9a-f]{3,8}$/i.test(r.c)) run.c = r.c;
     runs.push(run);
   }
-  return runs.map((r) => r.text).join('') === text && runs.some((r) => r.b !== undefined || r.i !== undefined || r.u !== undefined) ? runs : undefined;
+  const formatted = runs.some((r) => r.b !== undefined || r.i !== undefined || r.u !== undefined || r.c !== undefined);
+  return runs.map((r) => r.text).join('') === text && formatted ? runs : undefined;
 }
 
 /** Excalidraw binding → ours: a fixed point pins the spot, otherwise the end aims at the centre. */

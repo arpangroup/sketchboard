@@ -71,6 +71,7 @@ class GrayscaleTransformer implements ColorTransformer {
       out.headerColor = this.transformColor(out.headerColor);
     }
     if (out.type === 'code') out.printMode = 'grayscale';
+    if (out.type === 'text' && out.runs) out.runs = out.runs.map((r) => (r.c ? { ...r, c: this.transformColor(r.c) } : r));
     return out;
   }
 
@@ -104,7 +105,9 @@ class BlackWhiteTransformer implements ColorTransformer {
       // tables: black rules & text, no fills (keeps text readable on any printer)
       return { ...el, strokeColor: '#000000', textColor: '#000000', opacity: 100, backgroundColor: 'transparent', headerColor: 'transparent' };
     }
-    const base = { ...el, strokeColor: '#000000', opacity: 100 };
+    // coloured words print black like the rest of the text
+    const words = el.type === 'text' && el.runs ? { runs: el.runs.map(({ text, b, i, u }) => ({ text, b, i, u })) } : {};
+    const base = { ...el, strokeColor: '#000000', opacity: 100, ...words } as SketchElement;
     if (isTransparent(el.backgroundColor)) return { ...base, backgroundColor: 'transparent' };
     // solid fills → white paper (no hatching behind text)
     if (el.fillStyle === 'solid') return { ...base, backgroundColor: '#ffffff', fillStyle: 'solid' };

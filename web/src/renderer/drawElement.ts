@@ -129,6 +129,7 @@ function drawRichText(ctx: CanvasRenderingContext2D, t: TextPrimitive, ox: numbe
     let x = ox + (t.align === 'center' ? (t.width - total) / 2 : t.align === 'right' ? t.width - total : 0);
     line.forEach((f, k) => {
       ctx.font = runFont(t, f.bold, f.italic);
+      ctx.fillStyle = f.color ?? t.color;
       ctx.fillText(f.text, x, y);
       if (f.underline && f.text.trim()) ctx.fillRect(x, y + t.fontSize * 0.12, widths[k], Math.max(1, t.fontSize / 16));
       x += widths[k];
