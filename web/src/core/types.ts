@@ -189,6 +189,11 @@ export interface TextElement extends BaseElement {
   fontStyle: FontStyle;
   underline: boolean;
   /**
+   * Fixed-width text box: the text wraps onto new lines at `width` (set by dragging a side handle).
+   * Unset = the box grows to fit its longest line.
+   */
+  fixedWidth?: boolean;
+  /**
    * Label of a shape: the text sits centred inside that shape, wraps to its width and moves,
    * turns, flips and is deleted with it (no grouping needed).
    */

@@ -23,7 +23,7 @@ import type {
 import { pointsToElementGeometry } from '../elements/handlers/pointShapes';
 import { highlighterSize, penSize } from '../elements/strokeOutline';
 import { cellLines, cellWeight, colOffsets, relayout, rowOffsets } from '../elements/table/tableLayout';
-import { measureText, wrapText } from '../elements/textMetrics';
+import { measureText, textBoxSize, wrapText } from '../elements/textMetrics';
 import { canHoldLabel } from '../elements/boundText';
 import { canBindTo } from '../elements/binding';
 import { figureGeometry, isFigure } from '../elements/figures/figures';
@@ -389,8 +389,10 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
         const tag = sb(e);
         if (typeof tag?.figurePart === 'string' && rebuiltFigures.has(tag.figurePart)) break; // part of a restored code block
         const bound = typeof e.containerId === 'string' && e.containerId ? e.containerId : undefined;
-        // a shape's label: take the unwrapped text, SketchBoard wraps it to the shape itself
-        const text = str(bound && typeof e.originalText === 'string' ? e.originalText : e.text, '').replace(/\r\n/g, '\n');
+        // a fixed-width box (Excalidraw autoResize: false) wraps at its width
+        const fixed = !bound && e.autoResize === false && num(e.width) > 0;
+        // a shape's label or a fixed-width box: take the unwrapped text, SketchBoard wraps it itself
+        const text = str((bound || fixed) && typeof e.originalText === 'string' ? e.originalText : e.text, '').replace(/\r\n/g, '\n');
         if (!text.trim()) break;
         const fmt = {
           fontWeight: tag?.fontWeight === 'bold' ? ('bold' as const) : ('normal' as const),
@@ -400,7 +402,9 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
         const fontFamily = typeof tag?.fontFamily === 'string' ? tag.fontFamily.slice(0, 60) : (FONT_FROM_EX[num(e.fontFamily, 5)] ?? 'hand');
         const fontSize = clamp(num(e.fontSize, 20), 4, 400);
         const textAlign: TextAlign = ALIGNS.has(e.textAlign) ? e.textAlign : 'left';
-        const m = measureText(text, fontSize, fontFamily, fmt);
+        const m = fixed
+          ? textBoxSize({ text, fontSize, fontFamily, ...fmt, width: Math.abs(num(e.width)), fixedWidth: true })
+          : measureText(text, fontSize, fontFamily, fmt);
         // keep the text where Excalidraw showed it: anchored by alignment horizontally, centred vertically
         const ex = num(e.x);
         const ew = Math.abs(num(e.width));
@@ -420,6 +424,7 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
           ...fmt,
           ...(angle ? { angle } : {}),
           ...(bound ? { containerId: bound } : {}),
+          ...(fixed ? { fixedWidth: true } : {}),
         });
         break;
       }
@@ -645,7 +650,7 @@ export function toExcalidraw(
         const bound = el.containerId && labelFor.get(el.containerId) === el.id ? el.containerId : null;
         out.push(
           common(el, {
-            text: el.containerId ? wrapText(el.text, el.width, el.fontSize, el.fontFamily, el).join('\n') : el.text,
+            text: el.containerId || el.fixedWidth ? wrapText(el.text, el.width, el.fontSize, el.fontFamily, el).join('\n') : el.text,
             originalText: el.text,
             fontSize: el.fontSize,
             fontFamily: fontToEx(el.fontFamily),
@@ -654,7 +659,7 @@ export function toExcalidraw(
             boundElements: bound ? null : boundTo(el.id),
             containerId: bound,
             lineHeight: LINE_HEIGHT,
-            autoResize: true,
+            autoResize: !el.fixedWidth,
             customData: { sketchboard: { fontFamily: el.fontFamily, fontWeight: el.fontWeight, fontStyle: el.fontStyle, underline: el.underline } },
           }),
         );

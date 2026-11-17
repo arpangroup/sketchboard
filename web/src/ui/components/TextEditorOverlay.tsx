@@ -34,7 +34,8 @@ export function TextEditorOverlay() {
   const left = (el.x + viewport.scrollX) * z;
   const top = (el.y + viewport.scrollY) * z;
   // a shape's label wraps to the shape: edit it at exactly its width, centred
-  const label = !!el.containerId;
+  // shape labels and fixed-width boxes wrap at their width: edit them at exactly that width
+  const label = !!el.containerId || !!el.fixedWidth;
   const shift = label ? 0 : el.textAlign === 'center' ? -(el.fontSize * z) / 2 : el.textAlign === 'right' ? -el.fontSize * z : 0;
 
   return (

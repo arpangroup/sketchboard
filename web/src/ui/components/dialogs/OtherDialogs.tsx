@@ -491,6 +491,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['Duplicate while moving', 'Alt + drag'],
     ['Nudge', 'Arrow keys (Shift = 10px)'],
     ['Edit text', 'Double-click or Enter'],
+    ['Wrap text onto new lines', 'Drag a text box’s left or right handle (Text width → Auto undoes it)'],
     ['Connect shapes (arrow follows them)', 'Draw an arrow from one shape to another · hold Ctrl to keep it free'],
     ['Insert or delete a page', 'Pages panel: hover between two pages, or hover a page for its buttons · or right-click the page'],
     ['Curve a line or arrow', 'Select it and drag the dot in the middle of a segment'],

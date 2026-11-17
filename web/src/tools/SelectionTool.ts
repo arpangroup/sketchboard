@@ -210,7 +210,9 @@ export class SelectionTool implements Tool {
     // Text always scales proportionally (it's driven by font size).
     // Text always scales proportionally; images keep their ratio unless Shift is held; shapes the reverse.
     const hasImage = m.originals.some((e) => e.type === 'image');
-    const keepAspect = m.originals.some((e) => e.type === 'text') || p.shiftKey !== hasImage;
+    // left / right handle on text: change the width only, so the text wraps (TextHandler.transform)
+    const wrapText = (m.handle === 'e' || m.handle === 'w') && m.originals.every((e) => e.type === 'text');
+    const keepAspect = !wrapText && (m.originals.some((e) => e.type === 'text') || p.shiftKey !== hasImage);
     const pointer = m.frame ? rotatePoint(p.world, m.frame.pivot, -m.frame.angle) : p.world;
     const nb = resizeBounds(m.startBounds, m.handle, pointer, keepAspect, p.altKey);
     const sb = m.startBounds;

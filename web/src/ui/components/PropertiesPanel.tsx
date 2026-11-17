@@ -119,6 +119,8 @@ export function PropertiesPanel() {
         ? [editingEl]
         : [];
   const labelText = subjects.find((e) => e.type === 'text' && e.containerId);
+  // free-standing text boxes (not shape labels) that are selected: they get the width setting
+  const freeTexts = picked.filter((e): e is Extract<SketchElement, { type: 'text' }> => e.type === 'text' && !e.containerId);
   // words inside a shape get their own colour row (the Stroke row colours the shape's outline)
   const showTextColor = !!labelText && subjects.some((e) => e.type !== 'text');
   const types = new Set<ElementType>(
@@ -368,6 +370,18 @@ export function PropertiesPanel() {
               ]}
             />
           </Section>
+          {freeTexts.length > 0 && (
+            <Section title="Text width">
+              <ButtonGroup
+                value={freeTexts.every((t) => t.fixedWidth) ? 'fixed' : freeTexts.some((t) => t.fixedWidth) ? undefined : 'auto'}
+                onChange={(mode) => editor.setTextWidthMode(mode === 'fixed')}
+                options={[
+                  { value: 'auto', label: 'Auto width — the box fits its longest line', icon: mini('M4 12h16M7 9l-3 3 3 3M17 9l3 3-3 3') },
+                  { value: 'fixed', label: 'Fixed width — text wraps onto new lines (or drag a side handle)', icon: mini('M4 6h16M4 12h13a3 3 0 0 1 0 6h-4M15 16l-2 2 2 2M4 18h5') },
+                ]}
+              />
+            </Section>
+          )}
         </>
       )}
 

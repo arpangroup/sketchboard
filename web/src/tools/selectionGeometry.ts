@@ -95,7 +95,10 @@ export function getHandles(els: readonly SketchElement[], zoom: number): Handle[
   if (tail) local.unshift({ id: 'tail', x: tail.x, y: tail.y });
   const onlyText = els.every((e) => e.type === 'text');
   const bigEnough = w * zoom > 40 && h * zoom > 40;
-  if (!onlyText && bigEnough) {
+  if (onlyText && w * zoom > 24) {
+    // text: left / right handles set a fixed width, so the text wraps onto new lines
+    local.push({ id: 'e', x: x + w, y: y + h / 2 }, { id: 'w', x, y: y + h / 2 });
+  } else if (!onlyText && bigEnough) {
     local.push(
       { id: 'n', x: x + w / 2, y },
       { id: 'e', x: x + w, y: y + h / 2 },

@@ -67,3 +67,28 @@ export function wrapText(text: string, maxWidth: number, fontSize: number, famil
   }
   return out;
 }
+
+/** What decides a text box's size: its text and font, and for a fixed-width box, its width. */
+export interface TextBoxLike extends TextFormat {
+  text: string;
+  fontSize: number;
+  fontFamily: FontFamily;
+  width: number;
+  fixedWidth?: boolean;
+}
+
+/** Lines a text box shows: wrapped at its width when it has a fixed width, else as typed. */
+export const textBoxLines = (t: TextBoxLike): string[] =>
+  t.fixedWidth ? wrapText(t.text || ' ', t.width, t.fontSize, t.fontFamily, t) : (t.text || ' ').split('\n');
+
+/**
+ * Size of a text box. Auto-width boxes fit their longest line; fixed-width boxes keep their width
+ * and grow downwards as the text wraps.
+ */
+export function textBoxSize(t: TextBoxLike): { width: number; height: number } {
+  if (!t.fixedWidth) {
+    const m = measureText(t.text || ' ', t.fontSize, t.fontFamily, t);
+    return { width: m.width, height: m.height };
+  }
+  return { width: t.width, height: Math.ceil(textBoxLines(t).length * t.fontSize * LINE_HEIGHT) };
+}

@@ -60,7 +60,7 @@ import { LaserLayer } from '../renderer/LaserLayer';
 import { STORAGE_KEYS } from '../core/constants';
 import { ensureFontLoaded } from '../core/fonts';
 import { getElementBounds, hitTestElement } from '../elements/registry';
-import { measureText } from '../elements/textMetrics';
+import { textBoxSize } from '../elements/textMetrics';
 import { contentBounds } from '../export/region';
 import { getPageBounds } from '../page/pageSizes';
 import { MAX_PAGES, type PageDecoration, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
@@ -738,7 +738,7 @@ export class Editor implements ToolContext {
           fontStyle: patch.fontStyle ?? el.fontStyle,
           underline: patch.underline ?? el.underline,
         };
-        const m = measureText(el.text || ' ', next.fontSize, next.fontFamily, next);
+        const m = textBoxSize({ ...el, ...next });
         Object.assign(p, next, { width: m.width, height: m.height });
       }
       return updateElement(el, anchored(el, p as Partial<SketchElement>));
@@ -749,6 +749,21 @@ export class Editor implements ToolContext {
   }
 
   // ───────────────────────────── Text editing ─────────────────────────────
+
+  /** Auto width: boxes fit their longest line again. Fixed: they keep their width and wrap. */
+  setTextWidthMode(fixed: boolean): void {
+    const texts = this.getSelectedElements().filter((e): e is TextElement => e.type === 'text' && !e.containerId && !e.locked);
+    if (!texts.length) return;
+    this.scene.upsert(
+      texts.map((el) => {
+        const next = { ...el, fixedWidth: fixed || undefined };
+        const size = textBoxSize(next);
+        const dx = fixed ? 0 : el.textAlign === 'center' ? (el.width - size.width) / 2 : el.textAlign === 'right' ? el.width - size.width : 0;
+        return updateElement(el, anchored(el, { fixedWidth: fixed || undefined, ...size, x: el.x + dx }));
+      }),
+    );
+    this.commitHistory();
+  }
 
   startTextEditing = (id: string): void => {
     this.setState({ editingTextId: id, selectedIds: {} });
@@ -763,8 +778,8 @@ export class Editor implements ToolContext {
       this.scene.upsert([updateElement(el, { text, ...layoutLabel({ ...el, text }, box) })]);
       return;
     }
-    const m = measureText(text || ' ', el.fontSize, el.fontFamily, el);
-    // keep alignment anchor stable while typing
+    const m = textBoxSize({ ...el, text });
+    // keep alignment anchor stable while typing (a fixed-width box keeps its width and grows down)
     const dx = el.textAlign === 'center' ? (el.width - m.width) / 2 : el.textAlign === 'right' ? el.width - m.width : 0;
     this.scene.upsert([updateElement(el, anchored(el, { text, width: m.width, height: m.height, x: el.x + dx }))]);
   }
@@ -1752,7 +1767,7 @@ export class Editor implements ToolContext {
         continue;
       }
       if (el.type !== 'text' || el.id === this.getState().editingTextId || el.containerId) continue;
-      const m = measureText(el.text || ' ', el.fontSize, el.fontFamily, el);
+      const m = textBoxSize(el);
       if (Math.abs(m.width - el.width) > 0.5 || Math.abs(m.height - el.height) > 0.5) {
         // centred / right-aligned text keeps its anchor when a web font arrives
         const dx = el.textAlign === 'center' ? (el.width - m.width) / 2 : el.textAlign === 'right' ? el.width - m.width : 0;
