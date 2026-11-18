@@ -2,7 +2,7 @@ import { LINE_HEIGHT } from '../../core/constants';
 import { pointInBounds } from '../../core/geometry';
 import type { Bounds, Point, TextElement } from '../../core/types';
 import type { ElementHandler, PointMapper, ShapeOutput } from '../ElementHandler';
-import { fontString, layoutRuns, styledRuns, textBoxLines, textBoxSize, wrapText } from '../textMetrics';
+import { fontString, hasListLines, layoutRuns, piecesOf, styledRuns, textBoxLines, textBoxSize, wrapText } from '../textMetrics';
 import { fontCss } from '../../core/fonts';
 
 export class TextHandler implements ElementHandler<TextElement> {
@@ -38,8 +38,10 @@ export class TextHandler implements ElementHandler<TextElement> {
   generateShape(el: TextElement): ShapeOutput {
     // shape labels and fixed-width boxes wrap at their width; formatted parts are laid out piece by piece
     const wrapAt = el.containerId || el.fixedWidth ? el.width : null;
-    const styled = styledRuns(el);
-    const rich = styled ? layoutRuns(styled, wrapAt, el.fontSize, el.fontFamily).lines : undefined;
+    // formatted words — or a list that wraps (it needs a hanging indent) — are laid out piece by piece
+    const styled = styledRuns(el) ?? (wrapAt !== null && hasListLines(el.text) ? piecesOf(el) : null);
+    const layout = styled ? layoutRuns(styled, wrapAt, el.fontSize, el.fontFamily) : null;
+    const rich = layout?.lines;
     return {
       drawables: [],
       paths: [],
@@ -52,6 +54,7 @@ export class TextHandler implements ElementHandler<TextElement> {
               ? textBoxLines(el)
               : el.text.split('\n'),
         rich,
+        indents: layout?.indents.some((x) => x > 0) ? layout.indents : undefined,
         fontSize: el.fontSize,
         font: fontString(el.fontSize, el.fontFamily, el),
         align: el.textAlign,

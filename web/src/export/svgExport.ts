@@ -89,8 +89,9 @@ function textBlockToSvg(t: TextPrimitive, ox: number, oy: number): string {
               `${f.underline ? ' text-decoration="underline"' : ''}${f.color ? ` fill="${esc(f.color)}"` : ''}>${esc(f.text)}</tspan>`,
           )
           .join('');
+        const indent = t.align === 'right' ? 0 : t.align === 'center' ? (t.indents?.[i] ?? 0) / 2 : (t.indents?.[i] ?? 0);
         return (
-          `<text x="${n(ox + textAnchorX(t))}" y="${n(oy + textBaselineY(t, i))}" font-family="${esc(t.family)}"` +
+          `<text x="${n(ox + textAnchorX(t) + indent)}" y="${n(oy + textBaselineY(t, i))}" font-family="${esc(t.family)}"` +
           ` font-size="${t.fontSize}" fill="${t.color}" text-anchor="${anchor}" style="white-space:pre">${spans}</text>`
         );
       })

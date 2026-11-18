@@ -359,6 +359,12 @@ export function PropertiesPanel() {
               <Toggle label="Underline (Ctrl+U)" active={!!v('underline')} onClick={() => (editor.getState().editingTextId ? editor.toggleTextFormat('underline') : set({ underline: !v('underline') }))}>
                 <u className="sb-txt">U</u>
               </Toggle>
+              <Toggle label="Bulleted list (Ctrl+Shift+8)" active={editor.activeList() === 'bullet'} onClick={() => editor.toggleList('bullet')}>
+                {mini('M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01')}
+              </Toggle>
+              <Toggle label="Numbered list (Ctrl+Shift+7)" active={editor.activeList() === 'number'} onClick={() => editor.toggleList('number')}>
+                {mini('M10 6h10M10 12h10M10 18h10M4 4.5h1.5v4M3.5 8.5h3M3.5 13.5c0-1 2.5-1.5 2.5 0S3.5 16 3.5 17.5h3')}
+              </Toggle>
             </div>
           </Section>
           <Section title="Text align">

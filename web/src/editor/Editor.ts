@@ -62,6 +62,7 @@ import { STORAGE_KEYS } from '../core/constants';
 import { ensureFontLoaded } from '../core/fonts';
 import { getElementBounds, hitTestElement } from '../elements/registry';
 import { normalizeRuns, textBoxSize } from '../elements/textMetrics';
+import { type ListKind, listKindAt, toggleList } from '../elements/textLists';
 import { contentBounds } from '../export/region';
 import { getPageBounds } from '../page/pageSizes';
 import { MAX_PAGES, type PageDecoration, pageDecorations, pageRects, requiredPageCount } from '../page/pageLayout';
@@ -99,7 +100,10 @@ const COMMON_STYLE_KEYS = [
  * keeping UI and engine decoupled. It implements ToolContext so tools get a narrow API.
  */
 /** Formatting the text editor can apply to the words selected in it. */
-export type SelectionFormat = { kind: 'bold' | 'italic' | 'underline' } | { kind: 'color'; value: string };
+export type SelectionFormat =
+  | { kind: 'bold' | 'italic' | 'underline' }
+  | { kind: 'color'; value: string }
+  | { kind: 'list'; list: ListKind };
 
 export class Editor implements ToolContext {
   readonly store = new Store<AppState>(createInitialAppState());
@@ -1757,6 +1761,56 @@ export class Editor implements ToolContext {
   flushSave(): void {
     this.autosave.flush();
     void this.storage.save(this.getSceneData());
+  }
+
+  /**
+   * Bulleted / numbered list (Ctrl+Shift+8 / 7). While typing: the lines with the caret or selection;
+   * otherwise every line of the selected text boxes and shape labels. Applying it again removes it.
+   */
+  toggleList(kind: ListKind): void {
+    const editing = this.getState().editingTextId;
+    if (editing && this.formatSelection?.({ kind: 'list', list: kind })) return;
+    const targets = this.listTargets();
+    if (!targets.length) return;
+    // one decision for all: if every box is already this list, they all go back to plain lines
+    const allOn = targets.every((t) => listKindAt(t.text, 0, t.text.length) === kind);
+    const out = targets.map((t) => {
+      const already = listKindAt(t.text, 0, t.text.length) === kind;
+      const next = !allOn && already ? { text: t.text, runs: t.runs } : toggleList({ text: t.text, runs: t.runs, from: 0, to: t.text.length }, kind);
+      const runs = next.runs ? normalizeRuns(next.runs, t) : undefined;
+      const box = t.containerId ? this.scene.getElement(t.containerId) : undefined;
+      if (box && !box.isDeleted) return updateElement(t, { text: next.text, runs, ...layoutLabel({ ...t, text: next.text, runs }, box) });
+      const m = textBoxSize({ ...t, text: next.text, runs });
+      const dx = t.textAlign === 'center' ? (t.width - m.width) / 2 : t.textAlign === 'right' ? t.width - m.width : 0;
+      return updateElement(t, { text: next.text, runs, width: m.width, height: m.height, x: t.x + dx });
+    });
+    this.scene.upsert(out);
+    this.commitHistory();
+  }
+
+  /** Which list the selected text is (for lighting up the list buttons). */
+  activeList(): ListKind | null {
+    const targets = this.listTargets();
+    const kinds = targets.map((t) => listKindAt(t.text, 0, t.text.length));
+    return kinds.length && kinds.every((k) => k === kinds[0]) ? kinds[0] : null;
+  }
+
+  private listTargets(): TextElement[] {
+    const editing = this.getState().editingTextId;
+    if (editing) {
+      const el = this.scene.getElement(editing);
+      return el?.type === 'text' ? [el] : [];
+    }
+    const out: TextElement[] = [];
+    for (const e of this.getSelectedElements()) {
+      if (e.locked) continue;
+      if (e.type === 'text') out.push(e);
+      else {
+        const label = labelOf(this.scene.getElements(), e.id);
+        if (label) out.push(label);
+      }
+    }
+    return out.filter((t, i, a) => a.findIndex((u) => u.id === t.id) === i);
   }
 
   /** Ctrl/Cmd+B, I, U - works while typing and on selected text elements. */

@@ -126,7 +126,8 @@ function drawRichText(ctx: CanvasRenderingContext2D, t: TextPrimitive, ox: numbe
       return ctx.measureText(f.text).width;
     });
     const total = widths.reduce((a, b) => a + b, 0);
-    let x = ox + (t.align === 'center' ? (t.width - total) / 2 : t.align === 'right' ? t.width - total : 0);
+    const indent = t.indents?.[i] ?? 0; // wrapped list item: under its text, not its marker
+    let x = ox + (t.align === 'center' ? (t.width - total - indent) / 2 + indent : t.align === 'right' ? t.width - total : indent);
     line.forEach((f, k) => {
       ctx.font = runFont(t, f.bold, f.italic);
       ctx.fillStyle = f.color ?? t.color;

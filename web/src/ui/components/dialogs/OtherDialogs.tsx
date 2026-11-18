@@ -502,6 +502,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['More actions', 'Right-click (group, frame, flip, copy as PNG…)'],
     ['Open an element’s link', 'Ctrl+click it, or click its link badge'],
     ['Bold / italic / underline', 'Ctrl+B / Ctrl+I / Ctrl+U'],
+    ['Bulleted / numbered list', 'Ctrl+Shift+8 / Ctrl+Shift+7'],
     ['Paste image or text', 'Ctrl+V (or drag & drop files)'],
     ['Stylus', 'Pen draws, fingers pan & pinch (Pen mode)'],
   ];

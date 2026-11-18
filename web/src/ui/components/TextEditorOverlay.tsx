@@ -4,13 +4,15 @@ import { fontCss } from '../../core/fonts';
 import type { TextElement, TextRun } from '../../core/types';
 import { styledRuns } from '../../elements/textMetrics';
 import type { SelectionFormat } from '../../editor/Editor';
+import { continueList, renumber, type TextEdit, toggleList } from '../../elements/textLists';
 import { useAppState, useEditor, useSceneRevision } from '../EditorContext';
 
 
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** The editor's starting HTML: the text, with formatted words wrapped in <b> / <i> / <u>. */
-function toHtml(el: TextElement): string {
+function toHtml(source: TextElement, content?: { text: string; runs?: TextRun[] }): string {
+  const el = content ? { ...source, text: content.text, runs: content.runs } : source;
   const bold = el.fontWeight === 'bold';
   const italic = el.fontStyle === 'italic';
   const runs = styledRuns(el) ?? [{ text: el.text, bold, italic, underline: !!el.underline }];
@@ -80,7 +82,82 @@ function readEditor(root: HTMLElement): { text: string; runs: TextRun[] } {
     });
   };
   walk(root);
+  // with pre-formatted white space the browser ends the text with an extra "\n" so that an empty
+  // last line shows; like a trailing <br>, it isn't part of the text
+  if (last?.nodeType === Node.TEXT_NODE && last.textContent?.endsWith('\n') && text.endsWith('\n')) {
+    text = text.slice(0, -1);
+    const r = runs[runs.length - 1];
+    r.text = r.text.slice(0, -1);
+    if (!r.text) runs.pop();
+  }
   return { text, runs };
+}
+
+const MARK = '\uE000';
+
+/**
+ * Edits the editor's text as plain text + formatting (for lists): reads it with the selection as
+ * character offsets, lets `fn` change it, then redraws the words and puts the selection back.
+ * Returns false (and changes nothing) when `fn` returns null.
+ */
+function applyTextEdit(root: HTMLElement, el: TextElement, fn: (e: TextEdit) => TextEdit | null): TextEdit | null {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !root.contains(sel.anchorNode) || !root.contains(sel.focusNode)) return null;
+  const range = sel.getRangeAt(0);
+  // mark the selection's ends with characters nobody types, then read the words back
+  const end = document.createTextNode(MARK);
+  const start = document.createTextNode(MARK);
+  const r2 = range.cloneRange();
+  r2.collapse(false);
+  r2.insertNode(end);
+  const r1 = range.cloneRange();
+  r1.collapse(true);
+  r1.insertNode(start);
+  const read = readEditor(root);
+  start.remove();
+  end.remove();
+  root.normalize();
+  const from = read.text.indexOf(MARK);
+  const to = read.text.indexOf(MARK, from + 1) - 1;
+  const text = read.text.split(MARK).join('');
+  const runs = read.runs.map((r) => ({ ...r, text: r.text.split(MARK).join('') })).filter((r) => r.text);
+  const out = fn({ text, runs, from, to });
+  if (!out) {
+    placeSelection(root, from, to);
+    return null;
+  }
+  root.innerHTML = toHtml(el, out);
+  placeSelection(root, out.from, out.to);
+  return out;
+}
+
+/** Puts the selection at plain-text offsets (counting a line break as one character). */
+function placeSelection(root: HTMLElement, from: number, to: number) {
+  const find = (target: number): [Node, number] => {
+    let left = target;
+    let found: [Node, number] | null = null;
+    const walk = (node: Node) => {
+      for (const child of Array.from(node.childNodes)) {
+        if (found) return;
+        if (child.nodeType === Node.TEXT_NODE) {
+          const len = child.textContent?.length ?? 0;
+          if (left <= len) found = [child, left];
+          else left -= len;
+        } else if (child.nodeName === 'BR') {
+          if (left === 0) found = [node, Array.from(node.childNodes).indexOf(child)];
+          else left -= 1;
+        } else walk(child);
+      }
+    };
+    walk(root);
+    return found ?? [root, root.childNodes.length];
+  };
+  const range = document.createRange();
+  range.setStart(...find(from));
+  range.setEnd(...find(to));
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
 }
 
 /**
@@ -121,6 +198,13 @@ export function TextEditorOverlay() {
     editor.setSelectionFormatter((f: SelectionFormat) => {
       const root = ref.current;
       const sel = window.getSelection();
+      if (f.kind === 'list') {
+        const current = root && (editor.scene.getElement(editingId) as TextElement | undefined);
+        if (!root || !current) return false;
+        const out = applyTextEdit(root, current, (e) => toggleList(e, f.list));
+        if (out) editor.updateEditingText(out.text, out.runs);
+        return !!out;
+      }
       if (!root || !sel || sel.isCollapsed || !root.contains(sel.anchorNode) || !root.contains(sel.focusNode)) return false;
       // these fire "input", which saves the change
       if (f.kind === 'color') {
@@ -203,7 +287,15 @@ export function TextEditorOverlay() {
         transformOrigin: el.angle ? `${(el.width / 2) * z - shift}px ${(el.height / 2) * z}px` : 'top left',
       }}
       onInput={save}
-      onBlur={() => editor.finishTextEditing()}
+      onBlur={() => {
+        // numbers stay in order after items were deleted or moved
+        if (ref.current) {
+          const { text, runs } = readEditor(ref.current);
+          const fixed = renumber({ text, runs, from: 0, to: 0 });
+          if (fixed.text !== text) editor.updateEditingText(fixed.text, fixed.runs);
+        }
+        editor.finishTextEditing();
+      }}
       onPaste={(e) => {
         // paste words, not someone else's styling
         e.preventDefault();
@@ -219,14 +311,28 @@ export function TextEditorOverlay() {
           editor.toggleTextFormat(fmt[k]); // selected words, or the whole box
           return;
         }
+        // Ctrl+Shift+8: bullets, Ctrl+Shift+7: numbers (as in Google Docs)
+        if (mod && e.shiftKey && (e.code === 'Digit8' || e.code === 'Digit7')) {
+          e.preventDefault();
+          editor.toggleList(e.code === 'Digit8' ? 'bullet' : 'number');
+          return;
+        }
         if (e.key === 'Escape' || (e.key === 'Enter' && mod)) {
           e.preventDefault();
           e.currentTarget.blur();
           return;
         }
         if (e.key === 'Enter') {
-          // a plain line break (not a new <div>)
           e.preventDefault();
+          // in a list: the next item (or, on an empty item, the end of the list). Shift+Enter: a plain line.
+          if (!e.shiftKey && el && ref.current) {
+            const out = applyTextEdit(ref.current, el, continueList);
+            if (out) {
+              editor.updateEditingText(out.text, out.runs);
+              return;
+            }
+          }
+          // a plain line break (not a new <div>)
           document.execCommand('insertLineBreak');
         }
       }}

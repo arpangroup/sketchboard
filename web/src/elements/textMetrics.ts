@@ -138,7 +138,13 @@ function runWidth(text: string, fontSize: number, family: FontFamily, bold: bool
 export interface RichLayout {
   lines: StyledRun[][];
   widths: number[];
+  /** Left indent of each line (px): wrapped lines of a list item hang under its text, not its marker. */
+  indents: number[];
 }
+
+/** "• " / "12. " at the start of a line (with any indent before it). */
+const LIST_MARKER_RE = /^\s*(?:•|\d+[.)]) /;
+export const hasListLines = (text: string): boolean => text.split('\n').some((l) => LIST_MARKER_RE.test(l));
 
 /**
  * Lays out formatted pieces into lines: breaks at new lines, and — with `maxWidth` — wraps at word
@@ -167,13 +173,23 @@ export function layoutRuns(runs: readonly StyledRun[], maxWidth: number | null, 
   const widths: number[] = [];
   const limit = maxWidth === null ? Infinity : Math.max(fontSize, maxWidth);
   const tokWidth = (t: Tok) => t.frags.reduce((s, f) => s + w(f), 0);
+  const indents: number[] = [];
   for (const para of paragraphs) {
     let line: StyledRun[] = [];
     let lineW = 0;
     let pendingSpace: Tok | null = null;
+    // a list item: lines after the first start under the item's text
+    const paraText = para.map((t) => t.frags.map((f) => f.text).join('')).join('');
+    const marker = maxWidth === null ? '' : (paraText.match(LIST_MARKER_RE)?.[0] ?? '');
+    const first = para[0]?.frags[0];
+    const hang = marker && first ? w(first, marker) : 0;
+    let paraLines = 0;
+    const curLimit = () => (paraLines > 0 ? Math.max(fontSize, limit - hang) : limit);
     const flush = () => {
       lines.push(line);
-      widths.push(lineW);
+      widths.push(lineW + (paraLines > 0 ? hang : 0));
+      indents.push(paraLines > 0 ? hang : 0);
+      paraLines++;
       line = [];
       lineW = 0;
     };
@@ -184,12 +200,12 @@ export function layoutRuns(runs: readonly StyledRun[], maxWidth: number | null, 
       }
       const spaceW = pendingSpace && line.length ? tokWidth(pendingSpace) : 0;
       const wordW = tokWidth(tok);
-      if (lineW + spaceW + wordW <= limit || !line.length) {
+      if (lineW + spaceW + wordW <= curLimit() || !line.length) {
         if (pendingSpace && (line.length || maxWidth === null)) {
           line.push(...pendingSpace.frags);
           lineW += tokWidth(pendingSpace);
         }
-        if (wordW <= limit || maxWidth === null) {
+        if (wordW <= curLimit() || maxWidth === null) {
           line.push(...tok.frags);
           lineW += wordW;
         } else {
@@ -197,7 +213,7 @@ export function layoutRuns(runs: readonly StyledRun[], maxWidth: number | null, 
           for (const f of tok.frags) {
             for (const ch of f.text) {
               const cw = w(f, ch);
-              if (lineW + cw > limit && line.length) flush();
+              if (lineW + cw > curLimit() && line.length) flush();
               line.push({ ...f, text: ch });
               lineW += cw;
             }
@@ -225,12 +241,16 @@ export function layoutRuns(runs: readonly StyledRun[], maxWidth: number | null, 
       return acc;
     }, []),
   );
-  return { lines: merged, widths };
+  return { lines: merged, widths, indents };
 }
+
+/** The box's text as formatted pieces (one plain piece when it has no formatted words). */
+export const piecesOf = (t: TextBoxLike): StyledRun[] =>
+  styledRuns(t) ?? [{ text: t.text, bold: t.fontWeight === 'bold', italic: t.fontStyle === 'italic', underline: !!t.underline }];
 
 /** Lines a text box shows: wrapped at its width when it has a fixed width, else as typed. */
 export const textBoxLines = (t: TextBoxLike): string[] => {
-  const rich = styledRuns(t);
+  const rich = styledRuns(t) ?? (t.fixedWidth && hasListLines(t.text) ? piecesOf(t) : null);
   if (rich) return layoutRuns(rich, t.fixedWidth ? t.width : null, t.fontSize, t.fontFamily).lines.map((l) => l.map((f) => f.text).join(''));
   return t.fixedWidth ? wrapText(t.text || ' ', t.width, t.fontSize, t.fontFamily, t) : (t.text || ' ').split('\n');
 };
@@ -240,7 +260,8 @@ export const textBoxLines = (t: TextBoxLike): string[] => {
  * and grow downwards as the text wraps. Formatted parts are measured in their own font.
  */
 export function textBoxSize(t: TextBoxLike): { width: number; height: number } {
-  const rich = styledRuns(t);
+  // lists in a wrapping box are laid out piece by piece too, for their hanging indent
+  const rich = styledRuns(t) ?? (t.fixedWidth && hasListLines(t.text) ? piecesOf(t) : null);
   if (rich) {
     const l = layoutRuns(rich, t.fixedWidth ? t.width : null, t.fontSize, t.fontFamily);
     return {
@@ -257,7 +278,7 @@ export function textBoxSize(t: TextBoxLike): { width: number; height: number } {
 
 /** Number of lines a box's text takes when wrapped at `width` (shape labels). */
 export function wrappedLineCount(t: TextBoxLike, width: number): number {
-  const rich = styledRuns(t);
+  const rich = styledRuns(t) ?? (hasListLines(t.text) ? piecesOf(t) : null);
   if (rich) return layoutRuns(rich, width, t.fontSize, t.fontFamily).lines.length;
   return wrapText(t.text || ' ', width, t.fontSize, t.fontFamily, t).length;
 }

@@ -39,6 +39,8 @@ export interface TextPrimitive {
   fontStyle: 'normal' | 'italic';
   /** Lines made of differently formatted pieces (bold / italic / underlined words); `lines` holds the same text. */
   rich?: StyledRun[][];
+  /** Left indent of each rich line (px), for list items that wrap. */
+  indents?: number[];
 }
 
 /**

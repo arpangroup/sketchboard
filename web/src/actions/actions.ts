@@ -68,6 +68,15 @@ export const ACTIONS: Action[] = [
       perform: (ed) => ed.toggleTextFormat(kind),
     }),
   ),
+  ...(['bullet', 'number'] as const).map(
+    (kind): Action => ({
+      id: `text:${kind}List`,
+      label: kind === 'bullet' ? 'Bulleted list' : 'Numbered list',
+      shortcut: kind === 'bullet' ? 'Ctrl+Shift+8' : 'Ctrl+Shift+7',
+      keyTest: (e, ed) => mod(e) && e.shiftKey && e.code === (kind === 'bullet' ? 'Digit8' : 'Digit7') && ed.getSelectedElements().length > 0,
+      perform: (ed) => ed.toggleList(kind),
+    }),
+  ),
   {
     id: 'toggleShapeRecognition',
     label: 'Draw to shape',
