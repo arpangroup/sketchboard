@@ -54,6 +54,7 @@ export const createInitialAppState = (): AppState => ({
   editingTextId: null,
   editingCell: null,
   editingCodeId: null,
+  editingMathId: null,
   codeDefaults: { language: 'javascript', theme: 'dark', fontSize: 16, lineNumbers: true, showLanguage: true, markColor: 'yellow' },
   tableDefaults: {
     rows: 3,

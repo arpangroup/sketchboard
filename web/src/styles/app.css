@@ -2538,3 +2538,76 @@ a.sb-dropdown__item {
 .sb-btn--danger-fill:hover {
   filter: brightness(0.93);
 }
+
+/* ───────── Maths (LaTeX) editor ───────── */
+.sb-math-editor {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+.sb-math-editor__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+.sb-math-editor__head code {
+  font-size: 12px;
+}
+.sb-math-editor__snippets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sb-math-editor__snip {
+  min-width: 32px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--sb-island-border);
+  border-radius: 6px;
+  background: var(--sb-bg);
+  color: var(--sb-text);
+  font: 14px 'Times New Roman', serif;
+  cursor: pointer;
+}
+.sb-math-editor__snip:hover {
+  background: var(--sb-hover);
+}
+.sb-math-editor__src.sb-input {
+  height: auto;
+  min-height: 110px;
+  padding: 8px 10px;
+  font: 13px/1.45 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  resize: vertical;
+  white-space: pre;
+}
+.sb-math-editor__src[aria-invalid='true'] {
+  border-color: var(--sb-danger);
+}
+.sb-math-editor__error {
+  margin: 0;
+  color: var(--sb-danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.sb-math-editor__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.sb-math-editor__foot .sb-btn {
+  height: 32px;
+}
+.sb-math-editor__foot kbd {
+  font: 10px inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  opacity: 0.75;
+}

@@ -503,6 +503,8 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['Open an element’s link', 'Ctrl+click it, or click its link badge'],
     ['Bold / italic / underline', 'Ctrl+B / Ctrl+I / Ctrl+U'],
     ['Bulleted / numbered list', 'Ctrl+Shift+8 / Ctrl+Shift+7'],
+    ['Write a formula (LaTeX)', 'Alt+= or ⋯ → Maths · double-click a formula to edit it'],
+    ['Paste a formula', 'Copy LaTeX with $$ … $$ (or \\[ … \\], \\frac{…}…) and press Ctrl+V on the board'],
     ['Paste image or text', 'Ctrl+V (or drag & drop files)'],
     ['Stylus', 'Pen draws, fingers pan & pinch (Pen mode)'],
   ];

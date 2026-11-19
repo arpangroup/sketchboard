@@ -16,6 +16,7 @@ import { Sidebar, stopPresentation } from './components/Sidebar';
 import { TextEditorOverlay } from './components/TextEditorOverlay';
 import { CellEditorOverlay } from './components/CellEditorOverlay';
 import { CodeEditorOverlay } from './components/CodeEditorOverlay';
+import { MathEditorPanel } from './components/MathEditorPanel';
 import { Toolbar } from './components/Toolbar';
 import { EditorContext, type EditorServices, useAppState, useEditor } from './EditorContext';
 import { InstallDialog, PwaBanners } from './components/Pwa';
@@ -257,6 +258,7 @@ function Shell() {
         <TextEditorOverlay />
         <CellEditorOverlay />
         <CodeEditorOverlay />
+        <MathEditorPanel />
         {presenting ? (
           <button className="sb-island sb-btn sb-present-exit" onClick={() => stopPresentation(editor)}>
             Exit presentation <kbd>Esc</kbd>

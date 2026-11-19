@@ -147,6 +147,14 @@ function MoreTools() {
             </span>
             <kbd>C</kbd>
           </button>
+          <button role="menuitem" className="sb-more__item" onClick={pick(() => actions.execute('insertMath'))}>
+            <Icons.math />
+            <span>
+              Maths (LaTeX)
+              <small>Formulae — or paste $$ … $$ onto the board</small>
+            </span>
+            <kbd>Alt+=</kbd>
+          </button>
           <hr />
           <p className="sb-more__heading">Options</p>
           <label className="sb-more__toggle">

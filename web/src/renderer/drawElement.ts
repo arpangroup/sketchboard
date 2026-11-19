@@ -1,6 +1,6 @@
 import type { RoughCanvas } from 'roughjs/bin/canvas';
 import type { ColorMode, SketchElement } from '../core/types';
-import type { TextPrimitive } from '../elements/ElementHandler';
+import type { MathPrimitive, TextPrimitive } from '../elements/ElementHandler';
 import { shapeCache } from './ShapeCache';
 import { fileStore } from '../files/FileStore';
 
@@ -91,6 +91,44 @@ export function drawElement(
 
   if (shape.text) drawTextBlock(ctx, shape.text, 0, 0);
   for (const cell of shape.texts ?? []) drawTextBlock(ctx, cell.text, cell.x, cell.y);
+  if (shape.math) drawMath(ctx, shape.math);
+  ctx.restore();
+}
+
+/** A typeset formula: glyphs, rules and paths at the formula's scale. */
+export function drawMath(ctx: CanvasRenderingContext2D, m: MathPrimitive): void {
+  ctx.save();
+  ctx.scale(m.scale, m.scale);
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+  for (const it of m.items) {
+    if (it.k === 'glyph') {
+      ctx.font = it.font;
+      ctx.fillStyle = it.color ?? m.color;
+      ctx.fillText(it.text, it.x, it.y);
+    } else if (it.k === 'rect') {
+      ctx.fillStyle = it.color ?? m.color;
+      ctx.fillRect(it.x, it.y, it.w, it.h);
+    } else {
+      ctx.save();
+      if (it.clip) {
+        ctx.beginPath();
+        ctx.rect(it.clip.x, it.clip.y, it.clip.w, it.clip.h);
+        ctx.clip();
+      }
+      const p = new Path2D(it.d);
+      if (it.fill) {
+        ctx.fillStyle = it.fill === true ? m.color : it.fill;
+        ctx.fill(p);
+      }
+      if (it.stroke) {
+        ctx.strokeStyle = it.stroke === true ? m.color : it.stroke;
+        ctx.lineWidth = it.strokeWidth ?? 1;
+        ctx.stroke(p);
+      }
+      ctx.restore();
+    }
+  }
   ctx.restore();
 }
 

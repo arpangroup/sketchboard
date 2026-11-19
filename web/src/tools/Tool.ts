@@ -34,6 +34,7 @@ export interface ToolContext {
   startTextEditing(id: string): void;
   startCellEditing(id: string, row: number, col: number): void;
   startCodeEditing(id: string): void;
+  startMathEditing(id: string): void;
   /** Click on a code block's line number: toggles that line's mark. */
   toggleCodeLine(id: string, line: number): void;
   /** Remember the last table cell touched (row/column commands act on it). */

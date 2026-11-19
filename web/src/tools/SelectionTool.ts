@@ -377,6 +377,7 @@ export class SelectionTool implements Tool {
     if (hit) {
       if (hit.type === 'text' && !hit.locked) this.ctx.startTextEditing(hit.id);
       if (hit.type === 'code' && !hit.locked) this.ctx.startCodeEditing(hit.id);
+      if (hit.type === 'math' && !hit.locked) this.ctx.startMathEditing(hit.id);
       if (hit.type === 'table') {
         const hl = toLocal(hit, p.world);
         const cell = cellAt(hit, { x: hl.x - hit.x, y: hl.y - hit.y });

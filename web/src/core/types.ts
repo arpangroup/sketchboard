@@ -28,6 +28,7 @@ export type ElementType =
   | 'table'
   | 'figure'
   | 'code'
+  | 'math'
   | 'frame';
 
 export type FillStyle = 'hachure' | 'cross-hatch' | 'solid' | 'zigzag' | 'dots';
@@ -250,6 +251,21 @@ export interface CodeElement extends BaseElement {
   printMode?: 'grayscale' | 'blackwhite';
 }
 
+/**
+ * Mathematical formulae written in LaTeX (rendered with KaTeX). `latex` may hold several display
+ * equations — "$$ … $$" or "\\[ … \\]" blocks — which are stacked one under another. The box sizes
+ * itself to the rendered maths; resizing scales `fontSize`. Colour = strokeColor.
+ */
+export interface MathElement extends BaseElement {
+  type: 'math';
+  latex: string;
+  fontSize: number;
+  /** How several equations line up with each other. */
+  textAlign: TextAlign;
+  /** Render-only (print colour modes), never saved. */
+  printMode?: 'grayscale' | 'blackwhite';
+}
+
 /** Settings new code blocks start with (the code tool's "current style"). */
 export interface CodeDefaults {
   language: string;
@@ -275,6 +291,7 @@ export type SketchElement =
   | TableElement
   | FigureElement
   | CodeElement
+  | MathElement
   | FrameElement;
 
 export type ElementOfType<T extends ElementType> = Extract<SketchElement, { type: T }>;
@@ -407,6 +424,8 @@ export interface AppState {
   editingTextId: string | null;
   /** Code block being edited in place. */
   editingCodeId: string | null;
+  /** Maths element whose LaTeX is being edited. */
+  editingMathId: string | null;
   codeDefaults: CodeDefaults;
   /** Table cell being edited in place. */
   editingCell: { id: string; row: number; col: number } | null;

@@ -1,4 +1,5 @@
 import type { StyledRun } from './textMetrics';
+import type { MathItem } from './math/mathLayout';
 import type { Drawable } from 'roughjs/bin/core';
 import type { RoughGenerator } from 'roughjs/bin/generator';
 import type { Bounds, Point, SketchElement, TextAlign } from '../core/types';
@@ -43,6 +44,14 @@ export interface TextPrimitive {
   indents?: number[];
 }
 
+/** A typeset formula: pieces laid out at a reference size, drawn at `scale`. */
+export interface MathPrimitive {
+  items: readonly MathItem[];
+  scale: number;
+  /** Colour of the pieces that have none of their own. */
+  color: string;
+}
+
 /**
  * Renderer-agnostic description of an element's geometry, in ELEMENT-LOCAL coordinates
  * (origin at element.x / element.y). Both the canvas renderer and SVG exporter consume it,
@@ -55,6 +64,7 @@ export interface ShapeOutput {
   /** Several positioned text blocks (table cells), element-local offsets. */
   texts?: Array<{ x: number; y: number; text: TextPrimitive }>;
   image?: ImagePrimitive;
+  math?: MathPrimitive;
 }
 
 export type PointMapper = (p: Point) => Point;

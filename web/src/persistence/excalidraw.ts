@@ -6,6 +6,7 @@ import type {
   Arrowhead,
   BinaryFile,
   CodeElement,
+  MathElement,
   FigureElement,
   FrameElement,
   FillStyle,
@@ -404,6 +405,13 @@ export function fromExcalidraw(raw: unknown): ExcalidrawImport {
       case 'text': {
         const tag = sb(e);
         if (typeof tag?.figurePart === 'string' && rebuiltFigures.has(tag.figurePart)) break; // part of a restored code block
+        const mathProps = tag?.math;
+        if (mathProps && typeof mathProps === 'object' && typeof mathProps.latex === 'string') {
+          // a SketchBoard formula (shown as its LaTeX source in Excalidraw): restore it
+          const b = base(e);
+          out.push({ ...mathProps, ...b, type: 'math', id: b.id, strokeColor: b.strokeColor, latex: mathProps.latex } as MathElement);
+          break;
+        }
         const bound = typeof e.containerId === 'string' && e.containerId ? e.containerId : undefined;
         // a fixed-width box (Excalidraw autoResize: false) wraps at its width
         const fixed = !bound && e.autoResize === false && num(e.width) > 0;
@@ -698,6 +706,32 @@ export function toExcalidraw(
       case 'code':
         out.push(...rotateParts(el, codeToExcalidraw(el, common)));
         break;
+      case 'math': {
+        // Excalidraw has no maths: the LaTeX source as monospace text; customData restores the formula
+        const { printMode: _pm, ...props } = el;
+        const text = el.latex.trim();
+        const fs = Math.max(8, Math.round(el.fontSize * 0.5));
+        const lines = text.split('\n');
+        out.push(
+          common(el, {
+            type: 'text',
+            text,
+            originalText: text,
+            fontSize: fs,
+            fontFamily: 3,
+            textAlign: 'left',
+            verticalAlign: 'top',
+            width: Math.max(...lines.map((l) => l.length)) * fs * 0.6,
+            height: lines.length * fs * LINE_HEIGHT,
+            lineHeight: LINE_HEIGHT,
+            autoResize: true,
+            boundElements: boundTo(el.id),
+            containerId: null,
+            customData: { sketchboard: { math: { latex: props.latex, fontSize: props.fontSize, textAlign: props.textAlign } } },
+          }),
+        );
+        break;
+      }
       case 'frame':
         out.push(common(el, { name: el.name, frameId: null }));
         break;

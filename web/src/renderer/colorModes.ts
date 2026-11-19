@@ -71,6 +71,7 @@ class GrayscaleTransformer implements ColorTransformer {
       out.headerColor = this.transformColor(out.headerColor);
     }
     if (out.type === 'code') out.printMode = 'grayscale';
+    if (out.type === 'math') out.printMode = 'grayscale';
     if (out.type === 'text' && out.runs) out.runs = out.runs.map((r) => (r.c ? { ...r, c: this.transformColor(r.c) } : r));
     return out;
   }
@@ -101,6 +102,7 @@ class BlackWhiteTransformer implements ColorTransformer {
 
   transformElement(el: SketchElement): SketchElement {
     if (el.type === 'code') return { ...el, printMode: 'blackwhite', opacity: 100 };
+    if (el.type === 'math') return { ...el, strokeColor: '#000000', printMode: 'blackwhite', opacity: 100 };
     if (el.type === 'table') {
       // tables: black rules & text, no fills (keeps text readable on any printer)
       return { ...el, strokeColor: '#000000', textColor: '#000000', opacity: 100, backgroundColor: 'transparent', headerColor: 'transparent' };

@@ -5,6 +5,7 @@ import type {
   FrameElement,
   CodeDefaults,
   CodeElement,
+  MathElement,
   FigureElement,
   CurrentStyle,
   FreeDrawElement,
@@ -23,6 +24,7 @@ import { DEFAULT_STYLE } from '../core/constants';
 import { relayout } from './table/tableLayout';
 import { getFigure } from './figures/figures';
 import { codeLayout } from './code/codeLayout';
+import { mathBox } from './math/mathLayout';
 
 /** Factory functions: the ONLY place elements are constructed. */
 
@@ -143,6 +145,18 @@ export function createCode(style: CurrentStyle, defaults: CodeDefaults, at: Poin
   };
   const l = codeLayout(el);
   return { ...el, width: l.width, height: l.height };
+}
+
+/** LaTeX formula sized to its rendering (an estimate until the maths renderer has loaded). */
+export function createMath(style: CurrentStyle, at: Point, zIndex: number, latex: string, fontSize = 28): MathElement {
+  const el: MathElement = {
+    ...base('math', { ...style, backgroundColor: 'transparent' }, at, zIndex),
+    type: 'math',
+    latex,
+    fontSize,
+    textAlign: 'center',
+  };
+  return { ...el, ...mathBox(el) };
 }
 
 /** A named frame around `box` (crisp grey outline, no fill). */

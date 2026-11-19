@@ -13,7 +13,7 @@ import { toLocal, toWorld } from './rotation';
  */
 
 /** Element types an arrow end can attach to. */
-const BINDABLE = new Set<SketchElement['type']>(['rectangle', 'diamond', 'ellipse', 'figure', 'image', 'text', 'table', 'code']);
+const BINDABLE = new Set<SketchElement['type']>(['rectangle', 'diamond', 'ellipse', 'figure', 'image', 'text', 'table', 'code', 'math']);
 
 export const canBindTo = (el: SketchElement): boolean =>
   BINDABLE.has(el.type) && !el.isDeleted && !(el.type === 'text' && el.containerId);

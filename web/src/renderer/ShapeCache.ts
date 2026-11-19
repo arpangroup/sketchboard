@@ -4,6 +4,7 @@ import type { ColorMode, SketchElement } from '../core/types';
 import type { ShapeOutput } from '../elements/ElementHandler';
 import { elementRegistry } from '../elements/registry';
 import { getColorTransformer } from './colorModes';
+import { mathRevision } from '../elements/math/mathLayout';
 
 /**
  * Caches generated rough.js geometry. Shapes are generated in element-local space, so
@@ -43,6 +44,10 @@ function signature(el: SketchElement, mode: ColorMode): string {
       break;
     case 'code':
       parts.push(el.code, el.language, el.theme, el.fontSize, el.lineNumbers, el.showLanguage, el.title, JSON.stringify(el.marks));
+      break;
+    case 'math':
+      // layouts change when KaTeX or one of its fonts arrives
+      parts.push(el.latex, el.fontSize, el.textAlign, mathRevision());
       break;
     case 'figure':
       parts.push(el.figure, el.tail?.x, el.tail?.y);

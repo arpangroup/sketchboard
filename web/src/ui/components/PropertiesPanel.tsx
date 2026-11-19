@@ -183,7 +183,7 @@ export function PropertiesPanel() {
         </Section>
       ) : (
         !onlyImages && !onlyCode && (
-          <Section title={onlyTables ? 'Border' : 'Stroke'}>
+          <Section title={onlyTables ? 'Border' : types.size === 1 && types.has('math') ? 'Colour' : 'Stroke'}>
             <ColorRow label="Stroke colour" colors={STROKE_COLORS} value={v('strokeColor')} onChange={(c) => set({ strokeColor: c })} />
           </Section>
         )
@@ -405,6 +405,43 @@ export function PropertiesPanel() {
       )}
 
       {codeEl && <CodeSection key={codeEl.id} el={codeEl} />}
+
+      {has('math') && (
+        <>
+          <Section title="Formula size">
+            <div className="sb-size-row">
+              <ButtonGroup
+                value={v('fontSize')}
+                onChange={(fontSize) => set({ fontSize })}
+                options={[
+                  { value: 20, label: 'Small', icon: <b className="sb-txt">S</b> },
+                  { value: 28, label: 'Medium', icon: <b className="sb-txt">M</b> },
+                  { value: 40, label: 'Large', icon: <b className="sb-txt">L</b> },
+                ]}
+              />
+              <NumberInput value={v('fontSize')} min={6} max={400} onCommit={(fontSize) => set({ fontSize })} label="Formula size in px" />
+            </div>
+          </Section>
+          <Section title="Line up equations">
+            <ButtonGroup
+              value={v('textAlign')}
+              onChange={(textAlign) => set({ textAlign })}
+              options={[
+                { value: 'left', label: 'Left', icon: mini('M4 6h16M4 12h10M4 18h13') },
+                { value: 'center', label: 'Center', icon: mini('M4 6h16M7 12h10M5.5 18h13') },
+                { value: 'right', label: 'Right', icon: mini('M4 6h16M10 12h10M7 18h13') },
+              ]}
+            />
+          </Section>
+          {picked.length === 1 && picked[0].type === 'math' && !picked[0].locked && (
+            <Section title="LaTeX">
+              <button className="sb-btn sb-btn--sm" onClick={() => editor.startMathEditing(picked[0].id)}>
+                <Icons.math /> Edit formula
+              </button>
+            </Section>
+          )}
+        </>
+      )}
 
       <Section
         title={

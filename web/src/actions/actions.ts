@@ -138,6 +138,13 @@ export const ACTIONS: Action[] = [
     perform: (ed) => ed.insertCode(),
   },
   {
+    id: 'insertMath',
+    label: 'Insert maths (LaTeX)',
+    shortcut: 'Alt+=',
+    keyTest: (e) => e.altKey && !mod(e) && e.code === 'Equal',
+    perform: (ed) => void ed.insertMath(),
+  },
+  {
     id: 'tool:figure',
     label: 'Shapes gallery (last used shape)',
     shortcut: 'S',

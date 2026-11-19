@@ -1,7 +1,7 @@
 import rough from 'roughjs';
 import type { Bounds, ColorMode, SketchElement } from '../core/types';
 import { fontImportUrls } from '../core/fonts';
-import type { TextPrimitive } from '../elements/ElementHandler';
+import type { MathPrimitive, TextPrimitive } from '../elements/ElementHandler';
 import { getColorTransformer } from '../renderer/colorModes';
 import { textAnchorX, textBaselineY } from '../renderer/drawElement';
 import { shapeCache } from '../renderer/ShapeCache';
@@ -70,10 +70,40 @@ export function elementsToSvgMarkup(elements: readonly SketchElement[], mode: Co
     if (flipped) out.push('</g>');
     if (shape.text) out.push(textBlockToSvg(shape.text, 0, 0));
     for (const cell of shape.texts ?? []) out.push(textBlockToSvg(cell.text, cell.x, cell.y));
+    if (shape.math) out.push(mathToSvg(shape.math, el.id));
     out.push('</g>');
     if (href) out.push('</a>');
   }
   return out.join('');
+}
+
+/** A typeset formula (see drawMath): text in KaTeX's fonts, rules as rects, clipped paths. */
+function mathToSvg(m: MathPrimitive, id: string): string {
+  const out: string[] = [`<g transform="scale(${m.scale})">`];
+  const clips: string[] = [];
+  m.items.forEach((it, i) => {
+    if (it.k === 'glyph') {
+      out.push(
+        `<text x="${n(it.x)}" y="${n(it.y)}" font-family="${esc(it.family)}" font-size="${n(it.size)}"` +
+          `${it.italic ? ' font-style="italic"' : ''}${it.bold ? ' font-weight="bold"' : ''} fill="${esc(it.color ?? m.color)}"` +
+          ` style="white-space:pre">${esc(it.text)}</text>`,
+      );
+    } else if (it.k === 'rect') {
+      out.push(`<rect x="${n(it.x)}" y="${n(it.y)}" width="${n(it.w)}" height="${n(it.h)}" fill="${esc(it.color ?? m.color)}"/>`);
+    } else {
+      let clip = '';
+      if (it.clip) {
+        const cid = `m${id.replace(/[^\w-]/g, '')}-${i}`;
+        clips.push(`<clipPath id="${cid}"><rect x="${n(it.clip.x)}" y="${n(it.clip.y)}" width="${n(it.clip.w)}" height="${n(it.clip.h)}"/></clipPath>`);
+        clip = ` clip-path="url(#${cid})"`;
+      }
+      const fill = it.fill ? esc(it.fill === true ? m.color : it.fill) : 'none';
+      const stroke = it.stroke ? ` stroke="${esc(it.stroke === true ? m.color : it.stroke)}" stroke-width="${n(it.strokeWidth ?? 1)}"` : '';
+      out.push(`<path d="${it.d}" fill="${fill}"${stroke}${clip}/>`);
+    }
+  });
+  out.push('</g>');
+  return (clips.length ? `<defs>${clips.join('')}</defs>` : '') + out.join('');
 }
 
 function textBlockToSvg(t: TextPrimitive, ox: number, oy: number): string {
@@ -123,10 +153,15 @@ export function decorationsToSvg(items: readonly PageDecoration[], color: string
     .join('');
 }
 
+/** KaTeX's stylesheet (with its @font-face rules) for formulae in exported SVG files. */
+export const KATEX_CSS_URL = 'https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css';
+
 /** @import rules for every web font the exported text uses. */
 export function fontImportCss(elements: readonly SketchElement[]): string {
   const families = elements.flatMap((e) => (e.type === 'text' || e.type === 'table' ? [e.fontFamily] : []));
-  return [FONT_IMPORT_URL, ...fontImportUrls(families)].map((u) => `@import url('${u}');`).join('');
+  // formulae use KaTeX's fonts
+  const math = elements.some((e) => e.type === 'math') ? [KATEX_CSS_URL] : [];
+  return [FONT_IMPORT_URL, ...fontImportUrls(families), ...math].map((u) => `@import url('${u}');`).join('');
 }
 
 export interface SvgExportOptions {

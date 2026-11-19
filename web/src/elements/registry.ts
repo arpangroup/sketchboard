@@ -9,6 +9,7 @@ import { TextHandler } from './handlers/text';
 import { FigureHandler } from './handlers/figure';
 import { CodeHandler } from './handlers/code';
 import { FrameHandler } from './handlers/frame';
+import { MathHandler } from './handlers/math';
 
 /**
  * Registry of element strategies. New element types are added by registering a handler -
@@ -38,6 +39,7 @@ export const elementRegistry = new ElementRegistry()
   .register(new FreeDrawHandler())
   .register(new TextHandler())
   .register(new ImageHandler())
+  .register(new MathHandler())
   .register(new TableHandler())
   .register(new FigureHandler())
   .register(new CodeHandler())

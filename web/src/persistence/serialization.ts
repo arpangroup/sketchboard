@@ -4,7 +4,7 @@ import { bakesRotation, normalizeAngle } from '../elements/rotation';
 import { isCodeLanguage } from '../elements/code/highlight';
 import { codeLayout } from '../elements/code/codeLayout';
 
-const ELEMENT_TYPES = new Set(['rectangle', 'diamond', 'ellipse', 'line', 'arrow', 'freedraw', 'text', 'image', 'table', 'figure', 'code']);
+const ELEMENT_TYPES = new Set(['rectangle', 'diamond', 'ellipse', 'line', 'arrow', 'freedraw', 'text', 'image', 'table', 'figure', 'code', 'math']);
 
 export function serializeScene(elements: readonly SketchElement[], appState: AppState, includeDeleted = false): SceneData {
   return {
@@ -57,6 +57,18 @@ function migrate(el: SketchElement): SketchElement {
     const colWidths = Array.from({ length: cols }, (_, c) => Number(el.colWidths?.[c]) || 120);
     const rowHeights = Array.from({ length: rows }, (_, r) => Number(el.rowHeights?.[r]) || 40);
     return { ...el, rows, cols, cells, colWidths, rowHeights };
+  }
+  if (el.type === 'math') {
+    // the stored size is kept until the maths renderer re-measures it
+    return {
+      ...el,
+      latex: typeof el.latex === 'string' ? el.latex.slice(0, 20_000) : '',
+      fontSize: Math.min(400, Math.max(6, Number(el.fontSize) || 28)),
+      textAlign: el.textAlign === 'left' || el.textAlign === 'right' ? el.textAlign : 'center',
+      width: Number(el.width) > 0 ? Number(el.width) : 100,
+      height: Number(el.height) > 0 ? Number(el.height) : 40,
+      printMode: undefined,
+    };
   }
   if (el.type === 'code') {
     const marks: Record<string, 'yellow' | 'green' | 'red' | 'blue'> = {};

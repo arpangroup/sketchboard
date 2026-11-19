@@ -25,7 +25,9 @@ import type {
 import { codeLayout, resetCodeMetrics } from '../elements/code/codeLayout';
 import { angleOf, bakesRotation, centerOf, keepTopLeft, normalizeAngle, rotateAround, toLocal } from '../elements/rotation';
 import { getFigure } from '../elements/figures/figures';
-import { cloneElement, createCode, createFrame, createImage, createText, updateElement } from '../elements/factory';
+import { cloneElement, createCode, createFrame, createImage, createMath, createText, updateElement } from '../elements/factory';
+import { loadMath, mathBox, onMathChange } from '../elements/math/mathLayout';
+import { looksLikeLatex } from '../elements/math/mathSource';
 import {
   expandToGroups,
   type FlipAxis,
@@ -153,12 +155,18 @@ export class Editor implements ToolContext {
         if (el.isDeleted) continue;
         if (el.type === 'text') void ensureFontLoaded(el.fontFamily, el.fontWeight, el.fontStyle);
         if (el.type === 'code') void ensureFontLoaded('code');
+        if (el.type === 'math') void loadMath(); // KaTeX loads on first use
         if (el.type === 'table') void ensureFontLoaded(el.fontFamily, 'bold');
       }
     });
     if (typeof document !== 'undefined' && document.fonts) {
       document.fonts.addEventListener('loadingdone', () => this.refreshTextMetrics());
     }
+    // KaTeX (or one of its fonts) arrived: formulae get their real size and drawing
+    onMathChange(() => {
+      this.refreshMathSizes();
+      this.requestRender();
+    });
     fileStore.on('added', () => this.requestRender());
     this.scene.onChange((c) => {
       // shapes that moved / resized / turned drag the arrows attached to them along (same undo step)
@@ -270,6 +278,8 @@ export class Editor implements ToolContext {
     if (cell) ids.add(cell.id);
     const code = this.getState().editingCodeId;
     if (code) ids.add(code);
+    const math = this.getState().editingMathId;
+    if (math) ids.add(math);
     return ids;
   }
 
@@ -431,6 +441,7 @@ export class Editor implements ToolContext {
     if (this.getState().editingTextId || this.getState().editingCell || this.getState().editingCodeId) {
       (document.activeElement as HTMLElement | null)?.blur();
     }
+    if (this.getState().editingMathId) this.finishMathEditing();
     const info = this.toPointerInfo(e);
     const now = performance.now();
 
@@ -743,6 +754,11 @@ export class Editor implements ToolContext {
         // shrink rows back to fit the new text size, then grow where needed
         Object.assign(p, { fontSize: next.fontSize, fontFamily: next.fontFamily, textAlign: next.textAlign },
           relayout({ ...next, rowHeights: next.rowHeights.map(() => 0) }));
+      }
+      if (el.type === 'math' && (patch.fontSize || patch.textAlign)) {
+        const next = { ...el, fontSize: patch.fontSize ?? el.fontSize, textAlign: patch.textAlign ?? el.textAlign };
+        const box = mathBox(next);
+        Object.assign(p, { fontSize: next.fontSize, textAlign: next.textAlign, ...box, x: el.x + (el.width - box.width) / 2 });
       }
       if (el.type === 'text' && textKeys.some((k) => patch[k] !== undefined)) {
         const next = {
@@ -1306,6 +1322,68 @@ export class Editor implements ToolContext {
     const color = this.getState().codeDefaults.markColor;
     this.setCodeMarks(id, [line], el.marks[line] === color ? null : color);
   };
+
+  // ───────────────────────────── Maths (LaTeX) ─────────────────────────────
+
+  /** Adds a formula in the middle of the screen (or at `at`) and opens its LaTeX for editing. */
+  async insertMath(at?: Point, latex = ''): Promise<void> {
+    await loadMath();
+    const s = this.getState();
+    const el = createMath(s.currentStyle, { x: 0, y: 0 }, this.nextZIndex(), latex || String.raw`x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`, s.currentStyle.fontSize > 24 ? s.currentStyle.fontSize : 28);
+    const c = at ?? this.viewportCenter();
+    const placed = { ...el, x: c.x - el.width / 2, y: c.y - el.height / 2 };
+    this.scene.upsert([placed]);
+    this.setTool('selection');
+    this.setSelection([placed.id]);
+    this.startMathEditing(placed.id, !latex);
+  }
+
+  /** Opens the LaTeX editor for a formula. `fresh`: a new one (removed again if left empty or unchanged by Esc). */
+  startMathEditing = (id: string, fresh = false): void => {
+    void loadMath();
+    this.mathFresh = fresh;
+    this.setSelection([id]);
+    this.setState({ editingMathId: id });
+  };
+  private mathFresh = false;
+  isFreshMath = (): boolean => this.mathFresh;
+
+  updateEditingMath(latex: string): void {
+    const id = this.getState().editingMathId;
+    const el = id ? this.scene.getElement(id) : undefined;
+    if (!el || el.type !== 'math') return;
+    const box = mathBox({ ...el, latex });
+    // grows from its centre, like typing in centred text
+    const dx = (el.width - box.width) / 2;
+    this.scene.upsert([updateElement(el, anchored(el, { latex, ...box, x: el.x + dx }))]);
+  }
+
+  finishMathEditing(cancel = false): void {
+    const id = this.getState().editingMathId;
+    if (!id) return;
+    this.setState({ editingMathId: null });
+    const el = this.scene.getElement(id);
+    if (!el || el.type !== 'math') return;
+    if (!el.latex.trim() || (cancel && this.mathFresh)) {
+      this.scene.upsert([updateElement(el, { isDeleted: true })]);
+      this.setSelection([]);
+    } else this.setSelection([el.id]);
+    this.mathFresh = false;
+    this.commitHistory();
+  }
+
+  /** Formulae measured before KaTeX / its fonts arrived get their real size (derived data: no version bump). */
+  refreshMathSizes(): void {
+    const fixed: SketchElement[] = [];
+    for (const el of this.scene.getElements()) {
+      if (el.type !== 'math' || el.isDeleted) continue;
+      const box = mathBox(el);
+      if (Math.abs(box.width - el.width) > 0.5 || Math.abs(box.height - el.height) > 0.5) {
+        fixed.push({ ...el, x: el.x + (el.width - box.width) / 2, ...box });
+      }
+    }
+    if (fixed.length) this.scene.upsert(fixed, 'load');
+  }
 
   // ───────────────────────────── Tables ─────────────────────────────
 
@@ -1935,6 +2013,18 @@ export class Editor implements ToolContext {
       }
     }
     if (!text.trim() && this.clipboard.length) return this.pasteElements(this.clipboard);
+    // LaTeX ("$$ … $$", "\[ … \]", \frac{…} …): a rendered formula
+    if (looksLikeLatex(text)) {
+      await loadMath();
+      const at = this.lastPointer ?? this.viewportCenter();
+      const s = this.getState();
+      const el = createMath(s.currentStyle, at, this.nextZIndex(), text.replace(/\r\n?/g, '\n').trim().slice(0, 20_000));
+      this.scene.upsert([el]);
+      this.setTool('selection');
+      this.setSelection([el.id]);
+      this.commitHistory();
+      return;
+    }
     if (text.trim()) {
       const at = this.lastPointer ?? this.viewportCenter();
       const el = createText(this.getState().currentStyle, at, this.nextZIndex(), text.replace(/\r\n/g, '\n').slice(0, 10_000));
