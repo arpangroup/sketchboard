@@ -25,6 +25,7 @@ and print or export them — optionally converted to **pure black & white** for 
 | **Shapes gallery** | Toolbar *Shapes* (`S`): ~59 shapes — basic (triangle, hexagon, cross, heart, cloud, cylinder, cube, lightning…), stars & bursts, block arrows (incl. chevron, U-turn), **callouts / speech bubbles** (rectangle, rounded, oval, thought bubble — drag the yellow handle to aim the tail) and a full **flowchart** set (process, decision, data, document, terminator, preparation, manual input, delay, database, off-page connector…). Searchable; change a shape later from the panel. |
 | **Precision eraser** | `Shift+E` (or the eraser panel): rubs out only the part of a pen / highlighter / line stroke it touches, splitting strokes where you cut through. Four sizes. The eraser button remembers which eraser you used. |
 | **Code blocks** | `C` (or ⋯ → Code block): syntax-highlighted code in a window-style card — 18 languages (JS/TS, Python, Java, C#, C/C++, Go, Rust, Kotlin, PHP, Ruby, SQL, JSON, YAML, HTML/XML, CSS, Shell…), light/dark theme, line numbers, title. **Mark lines** in yellow / green / red / blue: click a line number, or type `3, 5-7`. Live highlighting while typing, Tab/Shift+Tab indent, auto-indent on Enter. Prints in B/W, exports, searchable. |
+| **Maths (LaTeX)** | `Alt+=` (or ⋯ → Maths) or just **paste LaTeX** (`$$ … $$`, `\[ … \]`, `\frac{…}…`) with `Ctrl+V`: formulae rendered with KaTeX as crisp vectors — fractions, roots, sums, integrals, matrices, `cases`/`aligned`, Greek, `\color`. Several `$$` blocks stack in one element. Live preview while editing, snippet buttons, error messages; resize, recolour, align. Prints in B/W, exports to PNG/SVG. **Copy-paste examples:** [docs/LATEX.md](docs/LATEX.md). |
 | **Tables** | Table tool (`G`): drag to size or click for 3×3. Type straight into cells — `Tab`/`Shift+Tab` move, `Tab` on the last cell adds a row, `Alt+↑/↓` move up/down. Text wraps and rows grow. Drag grid lines to resize columns/rows. Panel: rows × columns, insert/delete row/column at the current cell, equal widths, cell padding, header row + colour, banded rows, cell fill, text colour, font/size/alignment, border colour/width/style/sloppiness. Prints & exports; search finds text in cells. |
 | **Text** | H1 / H2 / H3 / Paragraph presets, 20 fonts (hand-written, sans, serif, mono) **plus any Google Font or installed font by name**, preset or custom px size, **bold**, *italic*, underline, alignment. |
 | **Editing** | Select, multi-select, marquee, move, resize (Shift = keep ratio, Alt = from centre), **rotate** (round handle above the selection, Shift snaps to 15°; angle box and ±90° buttons in the panel; `Shift+R` / `Shift+Alt+R`), Alt-drag duplicate, endpoint editing for lines/arrows, copy/paste, duplicate, lock, z-order, undo/redo, grid, dark mode, B/W preview. |
@@ -97,6 +98,9 @@ Press `?` in the app for the full list.
 either shape and the arrow follows. Hold `Ctrl` while drawing to keep the ends free. See
 **[docs/ARROW_BINDING.md](docs/ARROW_BINDING.md)** for how it works.
 
+**Maths.** Paste LaTeX onto the board (`Ctrl+V`) or press `Alt+=` to write a formula. See
+**[docs/LATEX.md](docs/LATEX.md)** for a guide and ready-to-paste examples.
+
 ### Printing in black & white
 Click **Print** (top right) → choose paper, orientation, *Page as drawn* or *Fit drawing to page*, and **Black & white**.
 In B/W every stroke and text becomes black; fills are graded so text stays readable — near-white tints print as plain paper,
@@ -125,7 +129,8 @@ sketchboard/
 │       └── ui/              React components (toolbar, properties, dialogs…)
 ├── collab-server/           Node server: WebSocket relay (zero-knowledge) + workspace REST API (src/storage)
 ├── docs/ARCHITECTURE.md     HLD, LLD, UML, data model, APIs, patterns, trade-offs, scaling
-└── docs/ARROW_BINDING.md    connected arrows: how to use them and how they work
+├── docs/ARROW_BINDING.md    connected arrows: how to use them and how they work
+└── docs/LATEX.md           maths formulae: how to write them, copy-paste examples
 ```
 
 See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design.

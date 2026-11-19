@@ -484,6 +484,25 @@ with border = the normal stroke style, so colour modes, roughness and dash style
   (`parseLineList("3, 5-7")`). Search finds code lines; Excalidraw export = rectangle + monospace text with customData for
   a lossless round trip.
 
+### Maths (LaTeX)
+* `MathElement { latex, fontSize, textAlign }`; colour = `strokeColor`. `latex` keeps what the user typed or pasted:
+  `mathBlocks()` (`elements/math/mathSource.ts`) splits it into display equations — `$$…$$`, `\[…\]`, maths
+  environments, else a single `$…$` / bare formula — which are stacked and aligned left / centre / right.
+  `looksLikeLatex()` decides whether pasted text becomes a formula (delimiters, environments, or a short run of maths commands).
+* Rendering (`elements/math/mathLayout.ts`): KaTeX (lazy-loaded with its CSS and fonts, so it costs nothing until a board
+  has maths) lays the formula out in a hidden DOM node at a reference size (40 px). The layout is read back into a
+  renderer-agnostic display list — glyph runs (font, baseline from a zero-size inline-block marker), rules (CSS borders /
+  backgrounds: fraction bars, overlines, `\colorbox`) and SVG paths (roots, stretchy delimiters, arrows) transformed out of
+  their viewBox (`svgPath.ts`) with the clip KaTeX relies on. Canvas (`drawMath`) and SVG export (`mathToSvg`) draw the
+  same list scaled to `fontSize`, so screen, PNG, SVG and print match.
+* Pieces without their own `\color` take the element colour at draw time (recolouring needs no re-layout); print colour
+  modes set a render-only `printMode` (grayscale / black). Layouts are cached by source + alignment; `mathRevision()` is part
+  of the `ShapeCache` signature, and when KaTeX or a font arrives the editor re-measures formulae (derived size, no version bump).
+* Editing: `MathEditorPanel` (textarea + snippet buttons + KaTeX error message) beside the element; the board is the live
+  preview. Excalidraw export = the LaTeX source as text with customData, restored on import.
+* Trade-off: KaTeX over MathJax — smaller and much faster to typeset; its HTML output needs the DOM read-back above
+  (MathJax's SVG output would give paths directly, but it is a much larger download).
+
 ### Shapes gallery (figures)
 * `FigureElement { figure, tail? }` — one element type for ~59 gallery shapes. `elements/figures/figures.ts` is the catalogue:
   each entry is `build(w, h, tail) → { outline, details? }` written with `PathBuilder`, which emits an SVG path (rough.js
