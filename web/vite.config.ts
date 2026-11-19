@@ -3,7 +3,12 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [react()],
-  server: { port: 5173, host: true },
+  server: {
+    port: 5173,
+    host: true,
+    // the project, plus ../docs: a test checks the in-app maths guide against docs/LATEX.md
+    fs: { allow: ['.', '../docs'] },
+  },
   build: {
     target: 'es2022',
     sourcemap: true,
