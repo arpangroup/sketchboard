@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MathElement } from '../../core/types';
 import { isMathReady, mathLayout } from '../../elements/math/mathLayout';
+import { Icons } from '../icons/Icons';
 import { useAppState, useEditor, useSceneRevision } from '../EditorContext';
 
 /** Snippets for the buttons: inserted at the caret; "|" marks where the caret goes. */
@@ -28,6 +29,7 @@ const SNIPPETS: Array<{ label: string; title: string; text: string }> = [
 export function MathEditorPanel() {
   const { editor } = useEditor();
   const editingId = useAppState((s) => s.editingMathId);
+  const guideOpen = useAppState((s) => s.mathGuideOpen);
   const viewport = useAppState((s) => s.viewport);
   useSceneRevision();
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -45,6 +47,17 @@ export function MathEditorPanel() {
       else ta.setSelectionRange(ta.value.length, ta.value.length);
     });
   }, [editingId, editor]);
+
+  // the formula changed from outside (the guide's "Use" button): show it here
+  const latex = el?.type === 'math' ? el.latex : undefined;
+  useEffect(() => {
+    const ta = ref.current;
+    if (ta && latex !== undefined && ta.value !== latex) {
+      ta.value = latex;
+      ta.focus();
+      ta.setSelectionRange(latex.length, latex.length);
+    }
+  }, [latex]);
 
   // KaTeX arriving updates the error list
   useEffect(() => {
@@ -93,8 +106,17 @@ export function MathEditorPanel() {
       <div className="sb-math-editor__head">
         <strong>LaTeX</strong>
         <span className="sb-muted">
-          Use <code>$$ … $$</code> for each equation, or type one formula
+          <code>$$ … $$</code> per equation, or one formula
         </span>
+        <button
+          className="sb-math-editor__guide"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editor.setState((s) => ({ mathGuideOpen: !s.mathGuideOpen }))}
+          aria-pressed={guideOpen}
+          title="Examples to copy, cheat sheet and how-to"
+        >
+          <Icons.math /> Examples &amp; help
+        </button>
       </div>
       <div className="sb-math-editor__snippets" role="toolbar" aria-label="Insert">
         {SNIPPETS.map((sn) => (

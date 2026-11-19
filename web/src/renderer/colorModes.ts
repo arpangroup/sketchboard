@@ -92,6 +92,20 @@ export const BW_WHITE = 250;
 export const BW_TINT = 228;
 export const BW_PASTEL = 150;
 
+/** Alpha of a colour (1 = opaque). */
+export const alphaOf = (color: string): number => parseColor(color)?.[3] ?? 1;
+
+/** Mid grey that see-through things print in (black & white). */
+const BW_GREY = 128;
+const greyA = (a: number) => (a >= 1 ? '#808080' : `rgba(${BW_GREY}, ${BW_GREY}, ${BW_GREY}, ${Math.round(a * 100) / 100})`);
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/**
+ * Element opacity in black & white output. Solid things print fully black; see-through things
+ * (opacity below 100 %) keep their opacity — at least 30 % so they don't vanish — and print grey.
+ */
+export const bwOpacity = (el: Pick<SketchElement, 'opacity'>): number => (el.opacity < 100 ? Math.max(30, el.opacity) : 100);
+
 class BlackWhiteTransformer implements ColorTransformer {
   readonly mode = 'blackwhite' as const;
   readonly label = 'Black & white';
@@ -101,16 +115,34 @@ class BlackWhiteTransformer implements ColorTransformer {
   }
 
   transformElement(el: SketchElement): SketchElement {
+    // see-through things (opacity below 100 %, or a colour with transparency) print as a light,
+    // see-through grey instead of solid black — so they still look faint on paper
+    const faded = el.opacity < 100;
+    const opacity = bwOpacity(el);
+    const ink = (color: string) => {
+      const a = alphaOf(color);
+      return a < 1 ? greyA(clamp(a, 0.3, 0.8)) : faded ? greyA(1) : '#000000';
+    };
     if (el.type === 'code') return { ...el, printMode: 'blackwhite', opacity: 100 };
-    if (el.type === 'math') return { ...el, strokeColor: '#000000', printMode: 'blackwhite', opacity: 100 };
+    if (el.type === 'math') return { ...el, strokeColor: ink(el.strokeColor), printMode: 'blackwhite', opacity };
     if (el.type === 'table') {
       // tables: black rules & text, no fills (keeps text readable on any printer)
-      return { ...el, strokeColor: '#000000', textColor: '#000000', opacity: 100, backgroundColor: 'transparent', headerColor: 'transparent' };
+      return { ...el, strokeColor: ink(el.strokeColor), textColor: ink(el.textColor), opacity, backgroundColor: 'transparent', headerColor: 'transparent' };
     }
-    // coloured words print black like the rest of the text
+    // coloured words print like the rest of the text
     const words = el.type === 'text' && el.runs ? { runs: el.runs.map(({ text, b, i, u }) => ({ text, b, i, u })) } : {};
-    const base = { ...el, strokeColor: '#000000', opacity: 100, ...words } as SketchElement;
+    // highlighter ink is see-through by nature: a light grey band, never a black one over the words
+    const highlighter = el.type === 'freedraw' && el.kind === 'highlighter';
+    const base = { ...el, strokeColor: highlighter ? greyA(1) : ink(el.strokeColor), opacity, ...words } as SketchElement;
     if (isTransparent(el.backgroundColor)) return { ...base, backgroundColor: 'transparent' };
+    const fillAlpha = alphaOf(el.backgroundColor);
+    if (fillAlpha < 1 || faded) {
+      // a see-through fill: a pale grey wash (solid), or the chosen pattern in grey
+      const a = fillAlpha < 1 ? fillAlpha : 1;
+      return el.fillStyle === 'solid'
+        ? { ...base, backgroundColor: greyA(clamp(a * 0.3, 0.08, 0.3)), fillStyle: 'solid' }
+        : { ...base, backgroundColor: greyA(clamp(a, 0.3, 0.8)), fillDensity: 'light' as const };
+    }
     // solid fills → white paper (no hatching behind text)
     if (el.fillStyle === 'solid') return { ...base, backgroundColor: '#ffffff', fillStyle: 'solid' };
     // a pattern fill the user chose stays a pattern, in black; near-white ones are left blank

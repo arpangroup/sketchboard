@@ -38,8 +38,8 @@ export class TextHandler implements ElementHandler<TextElement> {
   generateShape(el: TextElement): ShapeOutput {
     // shape labels and fixed-width boxes wrap at their width; formatted parts are laid out piece by piece
     const wrapAt = el.containerId || el.fixedWidth ? el.width : null;
-    // formatted words — or a list that wraps (it needs a hanging indent) — are laid out piece by piece
-    const styled = styledRuns(el) ?? (wrapAt !== null && hasListLines(el.text) ? piecesOf(el) : null);
+    // formatted words — or a list (its items are indented a little, and hang when wrapping) — are laid out piece by piece
+    const styled = styledRuns(el) ?? (hasListLines(el.text) ? piecesOf(el) : null);
     const layout = styled ? layoutRuns(styled, wrapAt, el.fontSize, el.fontFamily) : null;
     const rich = layout?.lines;
     return {

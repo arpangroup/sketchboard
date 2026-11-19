@@ -426,6 +426,8 @@ export interface AppState {
   editingCodeId: string | null;
   /** Maths element whose LaTeX is being edited. */
   editingMathId: string | null;
+  /** The maths guide (examples to copy) is open. */
+  mathGuideOpen: boolean;
   codeDefaults: CodeDefaults;
   /** Table cell being edited in place. */
   editingCell: { id: string; row: number; col: number } | null;

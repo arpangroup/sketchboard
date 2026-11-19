@@ -4,7 +4,7 @@ import type { TextElement } from '../core/types';
 import { createText } from '../elements/factory';
 import { elementRegistry } from '../elements/registry';
 import { continueList, listKindAt, renumber, toggleList } from '../elements/textLists';
-import { layoutRuns, textBoxLines } from '../elements/textMetrics';
+import { layoutRuns, textBoxLines, textBoxSize } from '../elements/textMetrics';
 
 const all = (text: string) => ({ text, from: 0, to: text.length });
 
@@ -62,13 +62,21 @@ describe('lists in a text box', () => {
     const piece = { text: '• one two three four five six', bold: false, italic: false, underline: false };
     const l = layoutRuns([piece], 90, 20, 'normal');
     expect(l.lines.length).toBeGreaterThan(1);
-    expect(l.indents[0]).toBe(0);
-    expect(l.indents[1]).toBeGreaterThan(0);
+    // a small gap before the bullet; wrapped lines also hang under the item's text
+    expect(l.indents[0]).toBe(2);
+    expect(l.indents[1]).toBeGreaterThan(l.indents[0]);
+    // the gap is there without wrapping too, and grows with the text
+    expect(layoutRuns([piece], null, 20, 'normal').indents).toEqual([2]);
+    expect(layoutRuns([piece], null, 40, 'normal').indents).toEqual([4]);
     // a plain paragraph doesn't
     expect(layoutRuns([{ ...piece, text: 'one two three four five six' }], 90, 20, 'normal').indents.every((x) => x === 0)).toBe(true);
 
     const box: TextElement = { ...createText(DEFAULT_STYLE, { x: 0, y: 0 }, 1, piece.text), width: 90, fixedWidth: true };
     expect(textBoxLines(box).length).toBe(l.lines.length);
+    // an auto-width box is wide enough for the gap
+    const auto: TextElement = { ...box, fixedWidth: false, text: '• Milk' };
+    const plain: TextElement = { ...auto, text: '  Milk' };
+    expect(textBoxSize(auto).width).toBeGreaterThan(textBoxSize(plain).width - 1);
     const shape = elementRegistry.get(box).generateShape(box, {} as never);
     expect(shape.text?.indents?.[1]).toBeGreaterThan(0);
   });

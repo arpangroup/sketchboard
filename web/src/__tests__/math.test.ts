@@ -94,3 +94,4 @@ describe('maths elements', () => {
     expect(again.fontSize).toBe(m.fontSize);
   });
 });
+

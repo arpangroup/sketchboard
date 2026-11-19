@@ -2,6 +2,7 @@ import type { RoughCanvas } from 'roughjs/bin/canvas';
 import type { ColorMode, SketchElement } from '../core/types';
 import type { MathPrimitive, TextPrimitive } from '../elements/ElementHandler';
 import { shapeCache } from './ShapeCache';
+import { bwOpacity } from './colorModes';
 import { fileStore } from '../files/FileStore';
 
 /** Baseline offset shared by canvas & SVG so text lines up identically in both. */
@@ -44,7 +45,7 @@ export function drawElement(
 ): void {
   const shape = shapeCache.get(el, mode);
   ctx.save();
-  ctx.globalAlpha = (mode === 'blackwhite' ? 1 : el.opacity / 100) * alpha;
+  ctx.globalAlpha = (mode === 'blackwhite' ? bwOpacity(el) : el.opacity) / 100 * alpha;
   ctx.translate(el.x, el.y);
   const angle = el.angle ?? 0;
   if (angle) {

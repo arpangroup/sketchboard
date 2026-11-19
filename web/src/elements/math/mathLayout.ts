@@ -90,6 +90,15 @@ export function loadMath(): Promise<void> {
   return loading;
 }
 
+/** KaTeX's HTML for a source (each equation in display mode), for previews; null until KaTeX has loaded. */
+export function renderMathHtml(source: string): string | null {
+  if (!katex) return null;
+  const k = katex;
+  return mathBlocks(source)
+    .map((b) => k.renderToString(b, { displayMode: true, throwOnError: false, strict: 'ignore', output: 'html', trust: false }))
+    .join('');
+}
+
 let host: HTMLDivElement | null = null;
 const SENTINEL = 'rgb(1, 2, 3)'; // "the element's own colour"
 

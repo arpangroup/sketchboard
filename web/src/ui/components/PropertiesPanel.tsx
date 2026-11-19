@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { ensureFontLoaded, FONT_OPTIONS, fontCss, isKnownFont, presetFor, sanitizeFontName, TEXT_PRESETS, type TextPreset } from '../../core/fonts';
 import { BACKGROUND_COLORS, HIGHLIGHT_COLORS, STROKE_COLORS } from '../../core/constants';
 import type { Arrowhead, CodeElement, CurrentStyle, ElementType, SketchElement, TableDefaults, TableElement } from '../../core/types';
@@ -6,6 +6,8 @@ import { CODE_LANGUAGES } from '../../elements/code/highlight';
 import { formatLineList, MARK_COLORS, parseLineList, codeLines } from '../../elements/code/codeLayout';
 import { useAppState, useEditor, useIsCompact, useSceneRevision } from '../EditorContext';
 import { Icons } from '../icons/Icons';
+import { addRecentColor, type RecentColorKind, useRecentColors } from '../recentColors';
+import { parseHexColor } from '../colorCode';
 import { FIGURE_CATEGORIES, FIGURES } from '../../elements/figures/figures';
 import { bakesRotation } from '../../elements/rotation';
 import { LASER_SIZES } from '../../renderer/LaserLayer';
@@ -46,32 +48,106 @@ const mini = (d: string, extra: Record<string, string | number> = {}) => (
   </svg>
 );
 
-function ColorRow(p: { colors: string[]; value: string; onChange: (c: string) => void; label: string }) {
-  const custom = p.value !== 'transparent' && !p.colors.includes(p.value) ? p.value : null;
+function ColorRow(p: { colors: string[]; value: string; onChange: (c: string) => void; label: string; recent?: RecentColorKind }) {
+  const recent = useRecentColors(p.recent).filter((c) => !p.colors.some((x) => x.toLowerCase() === c));
+  const known = (c: string) => p.colors.includes(c) || recent.includes(c.toLowerCase());
+  const custom = p.value !== 'transparent' && !known(p.value) ? p.value : null;
+  const [open, setOpen] = useState(false);
+  const current = /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(p.value) ? p.value.toLowerCase() : '';
+  const [code, setCode] = useState(current.slice(1));
+  // follow the colour when it changes elsewhere (palette click, another element selected)
+  useEffect(() => setCode(current.slice(1)), [current]);
+  const typed = parseHexColor(code);
+  // remember a picked colour once the picker closes (not every step while dragging inside it)
+  const picker = useRef<HTMLInputElement>(null);
+  const kind = p.recent;
+  const palette = p.colors;
+  useEffect(() => {
+    const input = picker.current;
+    if (!input || !kind) return;
+    const commit = () => addRecentColor(kind, input.value, palette);
+    input.addEventListener('change', commit);
+    return () => input.removeEventListener('change', commit);
+  }, [kind, palette, open]);
+  const apply = () => {
+    if (!typed) return;
+    p.onChange(typed);
+    if (kind) addRecentColor(kind, typed, palette);
+  };
+  const swatch = (c: string, title?: string) => (
+    <button
+      key={c}
+      role="radio"
+      aria-checked={p.value.toLowerCase() === c.toLowerCase()}
+      aria-label={title ?? (c === 'transparent' ? 'Transparent' : c)}
+      title={title ?? (c === 'transparent' ? 'Transparent' : c)}
+      className={`sb-swatch ${p.value.toLowerCase() === c.toLowerCase() ? 'is-active' : ''} ${c === 'transparent' ? 'is-transparent' : ''}`}
+      style={{ background: c === 'transparent' ? undefined : c }}
+      // keep the text editor's selection, so a swatch can colour just the selected words
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => p.onChange(c)}
+    />
+  );
   return (
     <div className="sb-colors" role="radiogroup" aria-label={p.label}>
-      {p.colors.map((c) => (
-        <button
-          key={c}
-          role="radio"
-          aria-checked={p.value === c}
-          aria-label={c === 'transparent' ? 'Transparent' : c}
-          title={c === 'transparent' ? 'Transparent' : c}
-          className={`sb-swatch ${p.value === c ? 'is-active' : ''} ${c === 'transparent' ? 'is-transparent' : ''}`}
-          style={{ background: c === 'transparent' ? undefined : c }}
-          // keep the text editor's selection, so a swatch can colour just the selected words
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => p.onChange(c)}
-        />
-      ))}
-      <label className={`sb-swatch sb-swatch--custom ${custom ? 'is-active' : ''}`} title="Custom colour" style={custom ? { background: custom } : undefined}>
-        <input
-          type="color"
-          value={/^#[0-9a-f]{6}$/i.test(p.value) ? p.value : '#000000'}
-          onChange={(e) => p.onChange(e.target.value)}
-          aria-label={`Custom ${p.label.toLowerCase()}`}
-        />
-      </label>
+      {p.colors.map((c) => swatch(c))}
+      <button
+        className={`sb-swatch sb-swatch--custom ${custom ? 'is-active' : ''}`}
+        title="Custom colour (picker or colour code)"
+        aria-label={`Custom ${p.label.toLowerCase()}`}
+        aria-expanded={open}
+        style={custom ? { background: custom } : undefined}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((o) => !o)}
+      />
+      {recent.length > 0 && (
+        <div className="sb-colors__recent" role="group" aria-label={`Recent custom ${p.label.toLowerCase()}s`}>
+          {recent.map((c) => swatch(c, `${c} (recent custom colour)`))}
+        </div>
+      )}
+      {open && (
+        <div className="sb-colors__custom">
+          <label className="sb-colors__picker" title="Pick a colour" style={{ background: typed ?? (current || '#000000') }}>
+            <input
+              ref={picker}
+              type="color"
+              value={(typed ?? current ?? '#000000').slice(0, 7) || '#000000'}
+              onChange={(e) => {
+                setCode(e.target.value.slice(1));
+                p.onChange(e.target.value);
+              }}
+              aria-label={`Pick a custom ${p.label.toLowerCase()}`}
+            />
+          </label>
+          <span className="sb-colors__hash">#</span>
+          <input
+            className={`sb-input sb-colors__hex ${code && !typed ? 'is-invalid' : ''}`}
+            value={code}
+            maxLength={9}
+            spellCheck={false}
+            placeholder="e1e1e1"
+            aria-label={`${p.label} code (hex)`}
+            aria-invalid={!!code && !typed}
+            onChange={(e) => setCode(e.target.value.replace(/^#/, ''))}
+            onPaste={(e) => {
+              // "#E1E1E1", "e1e1e1 " … from anywhere
+              const v = e.clipboardData.getData('text').trim().replace(/^#/, '');
+              if (v) {
+                e.preventDefault();
+                setCode(v.slice(0, 8));
+              }
+            }}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') apply();
+              if (e.key === 'Escape') setOpen(false);
+            }}
+          />
+          <button className="sb-btn sb-btn--sm" disabled={!typed} onClick={apply}>
+            Apply
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -184,14 +260,14 @@ export function PropertiesPanel() {
       ) : (
         !onlyImages && !onlyCode && (
           <Section title={onlyTables ? 'Border' : types.size === 1 && types.has('math') ? 'Colour' : 'Stroke'}>
-            <ColorRow label="Stroke colour" colors={STROKE_COLORS} value={v('strokeColor')} onChange={(c) => set({ strokeColor: c })} />
+            <ColorRow label="Stroke colour" recent="stroke" colors={STROKE_COLORS} value={v('strokeColor')} onChange={(c) => set({ strokeColor: c })} />
           </Section>
         )
       )}
 
       {showFill && (
         <Section title="Background">
-          <ColorRow label="Background colour" colors={BACKGROUND_COLORS} value={v('backgroundColor')} onChange={(c) => set({ backgroundColor: c })} />
+          <ColorRow label="Background colour" recent="background" colors={BACKGROUND_COLORS} value={v('backgroundColor')} onChange={(c) => set({ backgroundColor: c })} />
         </Section>
       )}
 
@@ -328,7 +404,7 @@ export function PropertiesPanel() {
           </Section>
           {showTextColor && (
             <Section title="Text colour">
-              <ColorRow label="Text colour" colors={STROKE_COLORS} value={labelText!.strokeColor} onChange={(c) => set({ textColor: c })} />
+              <ColorRow label="Text colour" recent="stroke" colors={STROKE_COLORS} value={labelText!.strokeColor} onChange={(c) => set({ textColor: c })} />
             </Section>
           )}
           <Section title="Font">
@@ -435,9 +511,14 @@ export function PropertiesPanel() {
           </Section>
           {picked.length === 1 && picked[0].type === 'math' && !picked[0].locked && (
             <Section title="LaTeX">
+              <div className="sb-btn-row">
               <button className="sb-btn sb-btn--sm" onClick={() => editor.startMathEditing(picked[0].id)}>
                 <Icons.math /> Edit formula
               </button>
+              <button className="sb-btn sb-btn--sm" onClick={() => editor.setState({ mathGuideOpen: true })} title="Examples to copy, cheat sheet and how-to">
+                Examples
+              </button>
+              </div>
             </Section>
           )}
         </>
@@ -793,7 +874,7 @@ function TableSection(p: {
           <ButtonGroup
             value={val.cellPadding}
             onChange={(cellPadding) => set({ cellPadding })}
-            options={[4, 10, 16].map((v) => ({ value: v, label: `${v}px`, icon: <span className="sb-txt">{v}</span> }))}
+            options={[0, 1, 4, 10, 16].map((v) => ({ value: v, label: `${v}px`, icon: <span className="sb-txt">{v}</span> }))}
           />
           <NumberInput value={val.cellPadding} min={0} max={64} onCommit={(cellPadding) => set({ cellPadding })} label="Cell padding in px" />
         </div>
@@ -812,10 +893,10 @@ function TableSection(p: {
         )}
       </Section>
       <Section title={val.banded ? 'Band colour' : 'Cell fill'}>
-        <ColorRow label="Cell fill colour" colors={BACKGROUND_COLORS} value={p.backgroundColor} onChange={(backgroundColor) => p.onStyle({ backgroundColor })} />
+        <ColorRow label="Cell fill colour" recent="background" colors={BACKGROUND_COLORS} value={p.backgroundColor} onChange={(backgroundColor) => p.onStyle({ backgroundColor })} />
       </Section>
       <Section title="Text colour">
-        <ColorRow label="Text colour" colors={STROKE_COLORS} value={val.textColor} onChange={(textColor) => set({ textColor })} />
+        <ColorRow label="Text colour" recent="stroke" colors={STROKE_COLORS} value={val.textColor} onChange={(textColor) => set({ textColor })} />
       </Section>
       <Section title="Font">
         <FontPicker value={p.fontFamily} onChange={(fontFamily) => p.onStyle({ fontFamily })} />

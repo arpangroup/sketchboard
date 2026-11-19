@@ -2,7 +2,7 @@ import rough from 'roughjs';
 import type { Bounds, ColorMode, SketchElement } from '../core/types';
 import { fontImportUrls } from '../core/fonts';
 import type { MathPrimitive, TextPrimitive } from '../elements/ElementHandler';
-import { getColorTransformer } from '../renderer/colorModes';
+import { bwOpacity, getColorTransformer } from '../renderer/colorModes';
 import { textAnchorX, textBaselineY } from '../renderer/drawElement';
 import { shapeCache } from '../renderer/ShapeCache';
 import { imageFilterFor } from '../renderer/drawElement';
@@ -27,7 +27,7 @@ export function elementsToSvgMarkup(elements: readonly SketchElement[], mode: Co
   const out: string[] = [];
   for (const el of elements) {
     const shape = shapeCache.get(el, mode);
-    const opacity = mode === 'blackwhite' ? 1 : el.opacity / 100;
+    const opacity = (mode === 'blackwhite' ? bwOpacity(el) : el.opacity) / 100;
     const angle = el.angle ?? 0;
     const rotate = angle ? ` rotate(${n((angle * 180) / Math.PI)} ${n(el.width / 2)} ${n(el.height / 2)})` : '';
     const href = safeLink(el.link);

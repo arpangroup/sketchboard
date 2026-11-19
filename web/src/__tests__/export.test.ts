@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STYLE } from '../core/constants';
-import { createShape } from '../elements/factory';
+import { createFreeDraw, createShape } from '../elements/factory';
 import { buildPrintSvg } from '../export/printService';
 import { getPageDimensions } from '../page/pageSizes';
 import { parseScene } from '../persistence/serialization';
@@ -46,6 +46,27 @@ describe('colour modes', () => {
     const g = getColorTransformer('grayscale').transformElement(el);
     const v = parseInt(g.backgroundColor.slice(1, 3), 16);
     expect(Math.abs(v - luminance('#a5d8ff'))).toBeLessThan(1);
+  });
+
+  it('black & white prints see-through things as a faint grey, not solid black', () => {
+    const bw = (patch: Record<string, unknown>) => getColorTransformer('blackwhite').transformElement({ ...el, ...patch } as typeof el);
+    // a colour with transparency
+    expect(bw({ strokeColor: '#e0313166' }).strokeColor).toBe('rgba(128, 128, 128, 0.4)');
+    const fill = bw({ backgroundColor: '#1971c280', fillStyle: 'solid' });
+    expect(fill.backgroundColor).toMatch(/^rgba\(128, 128, 128, 0\.1\d*\)$/);
+    expect(bw({ backgroundColor: '#1971c280', fillStyle: 'hachure' })).toMatchObject({ fillDensity: 'light' });
+    // an element below 100 % opacity: grey, keeping its opacity (at least 30 %)
+    const faded = bw({ opacity: 50 });
+    expect(faded).toMatchObject({ strokeColor: '#808080', opacity: 50 });
+    expect(faded.backgroundColor).toMatch(/^rgba\(128, 128, 128/);
+    expect(bw({ opacity: 10 }).opacity).toBe(30);
+    // solid things stay black and fully opaque
+    expect(bw({})).toMatchObject({ strokeColor: '#000000', opacity: 100 });
+  });
+
+  it('black & white prints highlighter ink as a light grey band', () => {
+    const ink = { ...createFreeDraw(DEFAULT_STYLE, { x: 0, y: 0 }, 1, 'highlighter'), strokeColor: '#ffd43b' };
+    expect(getColorTransformer('blackwhite').transformElement(ink).strokeColor).toBe('#808080');
   });
 
   it('transparent stays transparent', () => {
