@@ -3,6 +3,7 @@ import { LINE_HEIGHT } from '../../core/constants';
 import { fontCss } from '../../core/fonts';
 import type { TableElement } from '../../core/types';
 import { cellWeight, colOffsets, rowOffsets } from '../../elements/table/tableLayout';
+import { tableFromClipboard } from '../../elements/table/tableIO';
 import { useAppState, useEditor, useSceneRevision } from '../EditorContext';
 
 /**
@@ -61,6 +62,16 @@ export function CellEditorOverlay() {
         lineHeight: LINE_HEIGHT,
         color: el.textColor,
         textAlign: el.textAlign,
+      }}
+      onPaste={(e) => {
+        // several cells (from a spreadsheet or a Markdown table): fill the table from this cell
+        const table = tableFromClipboard(e.clipboardData.getData('text/plain'), e.clipboardData.getData('text/html'));
+        if (!table || table.cells.length * (table.cells[0]?.length ?? 0) < 2) return;
+        e.preventDefault();
+        const at = editor.getState().editingCell;
+        if (!at) return;
+        editor.finishCellEditing();
+        editor.pasteIntoTable(at.id, at.row, at.col, table.cells);
       }}
       onChange={(e) => editor.updateEditingCell(e.target.value)}
       onBlur={() => editor.finishCellEditing()}

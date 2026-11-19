@@ -15,6 +15,7 @@ const ITEMS: Array<Item | 'sep'> = [
   { action: 'openFile', icon: 'folder', label: 'Open… (.sketchboard, .excalidraw)' },
   { action: 'saveFile', icon: 'download', label: 'Save to file…' },
   { action: 'saveExcalidraw', icon: 'download', label: 'Save as Excalidraw…' },
+  { action: 'importTable', icon: 'table', label: 'Import table (CSV, TSV, Markdown)…' },
   'sep',
   { action: 'dialog:workspace', icon: 'cloud', label: 'Workspace (saved drawings)…' },
   { action: 'saveToWorkspace', icon: 'cloud', label: 'Save to workspace' },

@@ -504,6 +504,8 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
     ['Bold / italic / underline', 'Ctrl+B / Ctrl+I / Ctrl+U'],
     ['Bulleted / numbered list', 'Ctrl+Shift+8 / Ctrl+Shift+7'],
     ['Write a formula (LaTeX)', 'Alt+= or ⋯ → Maths · double-click a formula to edit it'],
+    ['Paste a table', 'Copy cells in Excel / Google Sheets, or a Markdown table, and press Ctrl+V (into a selected table: from its clicked cell)'],
+    ['Copy a table', 'Select it → side panel “Copy table” (Excel / Sheets, Markdown, CSV), or right-click'],
     ['Paste a formula', 'Copy LaTeX with $$ … $$ (or \\[ … \\], \\frac{…}…) and press Ctrl+V on the board'],
     ['Paste image or text', 'Ctrl+V (or drag & drop files)'],
     ['Stylus', 'Pen draws, fingers pan & pinch (Pen mode)'],

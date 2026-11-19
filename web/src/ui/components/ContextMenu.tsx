@@ -13,6 +13,7 @@ type Entry = string | '-';
 const ELEMENT_MENU: Entry[] = [
   'cut', 'copy', 'paste', '-',
   'copyAsPng', 'copyAsSvg', 'copyStyles', 'pasteStyles', '-',
+  'copyTable:spreadsheet', 'copyTable:markdown', 'copyTable:csv', '-',
   'addToLibrary', 'hyperlink', 'openLink', '-',
   'group', 'ungroup', 'wrapInFrame', 'selectFrameContents', 'removeFrame', '-',
   'bringForward', 'bringToFront', 'sendBackward', 'sendToBack', '-',
@@ -23,6 +24,7 @@ const ELEMENT_MENU: Entry[] = [
 const CANVAS_MENU: Entry[] = [
   'paste', 'selectAll', '-',
   'copyAsPng', 'copyAsSvg', '-',
+  'importTable', '-',
   'undo', 'redo', '-',
   'toggleGrid', 'zoomToFit', 'zoomToPage', '-',
   'insertPageAbove', 'insertPageBelow', 'deletePage', '-',

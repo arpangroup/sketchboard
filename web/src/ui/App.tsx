@@ -18,6 +18,7 @@ import { CellEditorOverlay } from './components/CellEditorOverlay';
 import { CodeEditorOverlay } from './components/CodeEditorOverlay';
 import { MathEditorPanel } from './components/MathEditorPanel';
 import { MathGuidePanel } from './components/MathGuidePanel';
+import { isTableFileName } from '../elements/table/tableIO';
 import { Toolbar } from './components/Toolbar';
 import { EditorContext, type EditorServices, useAppState, useEditor } from './EditorContext';
 import { InstallDialog, PwaBanners } from './components/Pwa';
@@ -185,6 +186,12 @@ function Shell() {
           editor.setState((s) => ({ sidebar: { ...s.sidebar, open: true, tab: 'library' } }));
         })
         .catch((err) => editor.toast(`Could not import ${libFile.name}: ${(err as Error).message}`));
+      return;
+    }
+    // a table file (CSV / TSV / Markdown): a table where it was dropped
+    const tableFile = files.find((f) => isTableFileName(f.name));
+    if (tableFile) {
+      void editor.importTableFile(tableFile, at);
       return;
     }
     const scene = files.find(isSceneFile);

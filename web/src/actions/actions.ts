@@ -353,6 +353,25 @@ export const ACTIONS: Action[] = [
     perform: (ed) => ed.copyAsSvg(),
     enabled: (ed) => ed.scene.getElements().length > 0,
   },
+  ...(
+    [
+      ['spreadsheet', 'Copy table for Excel / Sheets'],
+      ['markdown', 'Copy table as Markdown'],
+      ['csv', 'Copy table as CSV'],
+    ] as const
+  ).map(
+    ([format, label]): Action => ({
+      id: `copyTable:${format}`,
+      label,
+      perform: (ed) => ed.copyTable(format),
+      enabled: (ed) => ed.selectedTable() !== null,
+    }),
+  ),
+  {
+    id: 'importTable',
+    label: 'Import table (CSV, TSV, Markdown)…',
+    perform: (ed) => ed.pickTableFile(),
+  },
   {
     id: 'copyStyles',
     label: 'Copy styles',

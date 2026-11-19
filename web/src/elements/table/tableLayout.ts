@@ -152,6 +152,22 @@ export function resizeGrid(el: TableElement, rows: number, cols: number): TableP
   return patch;
 }
 
+/** Narrowest and widest a column gets when sized to its contents (imported / pasted tables). */
+export const FIT_MIN_COL = 48;
+export const FIT_MAX_COL = 320;
+
+/** Column widths that fit each column's longest line (long text wraps at FIT_MAX_COL). */
+export function fitColumnWidths(el: TableElement): number[] {
+  return Array.from({ length: el.cols }, (_, c) => {
+    let w = 0;
+    for (let r = 0; r < el.rows; r++) {
+      const font = fontString(el.fontSize, el.fontFamily, { fontWeight: cellWeight(el, r) });
+      for (const line of (el.cells[r]?.[c] ?? '').split('\n')) w = Math.max(w, measure(line, font, el.fontSize));
+    }
+    return Math.round(Math.min(FIT_MAX_COL, Math.max(FIT_MIN_COL, w + el.cellPadding * 2 + 6)));
+  });
+}
+
 export function distributeColumns(el: TableElement): TablePatch {
   const w = el.width / el.cols;
   return finish(el, { colWidths: Array(el.cols).fill(w) });

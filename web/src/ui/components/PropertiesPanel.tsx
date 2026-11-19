@@ -869,6 +869,22 @@ function TableSection(p: {
           </div>
         </Section>
       )}
+      {t && (
+        <Section title="Copy table">
+          <div className="sb-copy-ops">
+            <button className="sb-chip-btn" onClick={() => void editor.copyTable('spreadsheet')} title="Copy the cells — paste into Excel, Google Sheets, Word or Docs">
+              <Icons.copy /> Excel / Sheets
+            </button>
+            <button className="sb-chip-btn" onClick={() => void editor.copyTable('markdown')} title="Copy as a Markdown table (GitHub, Notion, Obsidian…)">
+              <Icons.copy /> Markdown
+            </button>
+            <button className="sb-chip-btn" onClick={() => void editor.copyTable('csv')} title="Copy as comma-separated values">
+              <Icons.copy /> CSV
+            </button>
+          </div>
+          <p className="sb-hint">To fill this table, copy cells from a spreadsheet or a Markdown table, click a cell, and paste.</p>
+        </Section>
+      )}
       <Section title="Cell padding">
         <div className="sb-size-row">
           <ButtonGroup

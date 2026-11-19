@@ -25,9 +25,22 @@ import type {
 import { codeLayout, resetCodeMetrics } from '../elements/code/codeLayout';
 import { angleOf, bakesRotation, centerOf, keepTopLeft, normalizeAngle, rotateAround, toLocal } from '../elements/rotation';
 import { getFigure } from '../elements/figures/figures';
-import { cloneElement, createCode, createFrame, createImage, createMath, createText, updateElement } from '../elements/factory';
+import { cloneElement, createCode, createFrame, createImage, createMath, createTable, createText, updateElement } from '../elements/factory';
 import { loadMath, mathBox, onMathChange } from '../elements/math/mathLayout';
 import { looksLikeLatex } from '../elements/math/mathSource';
+import {
+  MAX_IMPORT_COLS,
+  MAX_IMPORT_ROWS,
+  type ParsedTable,
+  tableFromClipboard,
+  TABLE_FILE_ACCEPT,
+  tableFromFile,
+  toCSV,
+  toHTMLTable,
+  toMarkdown,
+  toTSV,
+  wasTruncated,
+} from '../elements/table/tableIO';
 import {
   expandToGroups,
   type FlipAxis,
@@ -50,7 +63,9 @@ import { canHoldLabel, labelNeedsLayout, labelOf, layoutLabel, withLabels } from
 import { anchorFor, arrowsBoundTo, BIND_DISTANCE, bindableAt, boundArrowGeometry } from '../elements/binding';
 import {
   distributeColumns,
+  fitColumnWidths,
   insertCol,
+  MIN_ROW_HEIGHT,
   insertRow,
   relayout,
   removeCol,
@@ -1387,6 +1402,113 @@ export class Editor implements ToolContext {
 
   // ───────────────────────────── Tables ─────────────────────────────
 
+  /** The one selected table (for copying it), or null. */
+  selectedTable(): TableElement | null {
+    const sel = this.getSelectedElements();
+    const cell = this.getState().editingCell;
+    const el = cell ? this.scene.getElement(cell.id) : sel.length === 1 ? sel[0] : undefined;
+    return el?.type === 'table' && !el.isDeleted ? el : null;
+  }
+
+  /**
+   * Copies the selected table's cells: "spreadsheet" puts tab-separated text plus an HTML table on
+   * the clipboard (Excel, Google Sheets, Word and Docs paste real cells), "markdown" a pipe table,
+   * "csv" comma-separated text.
+   */
+  async copyTable(format: 'spreadsheet' | 'markdown' | 'csv'): Promise<void> {
+    const el = this.selectedTable();
+    if (!el) return this.toast('Select a table first');
+    const cells = el.cells.map((r) => r.slice(0, el.cols)).slice(0, el.rows);
+    const text = format === 'markdown' ? toMarkdown(cells, el.textAlign) : format === 'csv' ? toCSV(cells) : toTSV(cells);
+    const what = format === 'markdown' ? 'as Markdown' : format === 'csv' ? 'as CSV' : 'for spreadsheets';
+    try {
+      if (format === 'spreadsheet' && typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': new Blob([text], { type: 'text/plain' }),
+            'text/html': new Blob([toHTMLTable(cells, el.headerRow)], { type: 'text/html' }),
+          }),
+        ]);
+      } else await navigator.clipboard.writeText(text);
+      this.toast(`Table copied ${what} (${el.rows} × ${el.cols})`);
+    } catch {
+      try {
+        await navigator.clipboard.writeText(text);
+        this.toast(`Table copied ${what}`);
+      } catch {
+        this.toast('Couldn’t copy — your browser blocked clipboard access');
+      }
+    }
+  }
+
+  /** A new table holding `parsed` (pasted or imported), with columns sized to their contents. */
+  insertTableFromCells(parsed: ParsedTable, at?: Point): void {
+    const s = this.getState();
+    const rows = parsed.cells.length;
+    const cols = parsed.cells[0]?.length ?? 0;
+    if (!rows || !cols) return;
+    const draft = createTable(s.currentStyle, { ...s.tableDefaults, rows, cols, headerRow: parsed.header || s.tableDefaults.headerRow }, { x: 0, y: 0, width: cols * 120, height: rows * 32 }, this.nextZIndex());
+    const withCells = { ...draft, cells: parsed.cells.map((r) => [...r]), rowHeights: Array(rows).fill(MIN_ROW_HEIGHT) };
+    const colWidths = fitColumnWidths(withCells);
+    const sized = { ...withCells, colWidths };
+    const el = { ...sized, ...relayout(sized) };
+    const c = at ?? this.lastPointer ?? this.viewportCenter();
+    const placed = at ? { ...el, x: c.x, y: c.y } : { ...el, x: c.x - el.width / 2, y: c.y - el.height / 2 };
+    this.scene.upsert([placed]);
+    this.setTool('selection');
+    this.setSelection([placed.id]);
+    this.commitHistory();
+    const cut = wasTruncated(rows, cols) ? ` — cut to ${MAX_IMPORT_ROWS} rows × ${MAX_IMPORT_COLS} columns` : '';
+    const from = { markdown: 'Markdown', spreadsheet: 'spreadsheet', csv: 'CSV', html: 'copied' }[parsed.source];
+    this.toast(`Table created from ${from} data (${rows} × ${cols})${cut}`);
+  }
+
+  /**
+   * Pastes cells into an existing table starting at (row, col) — like pasting into a spreadsheet:
+   * cells are overwritten and the table grows when the data runs past its edge.
+   */
+  pasteIntoTable(id: string, row: number, col: number, cells: string[][]): void {
+    const el = this.scene.getElement(id);
+    if (!el || el.type !== 'table' || el.locked || !cells.length) return;
+    const needRows = Math.min(MAX_IMPORT_ROWS, row + cells.length);
+    const needCols = Math.min(MAX_IMPORT_COLS, col + Math.max(...cells.map((r) => r.length)));
+    let next: TableElement = { ...el, ...resizeGrid(el, Math.max(el.rows, needRows), Math.max(el.cols, needCols)) } as TableElement;
+    const grid = next.cells.map((r) => [...r]);
+    cells.forEach((r, i) => r.forEach((v, j) => {
+      if (row + i < next.rows && col + j < next.cols) grid[row + i][col + j] = v;
+    }));
+    next = { ...next, cells: grid };
+    this.scene.upsert([updateElement(el, anchored(el, { ...next, ...relayout(next) }))]);
+    this.tableCursor = { id, row, col };
+    this.setSelection([id]);
+    this.commitHistory();
+    this.toast(`Pasted ${cells.length} × ${Math.max(...cells.map((r) => r.length))} cells`);
+  }
+
+  /** Asks for a CSV / TSV / Markdown file and turns its table into a table on the board. */
+  pickTableFile(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = TABLE_FILE_ACCEPT;
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (f) void this.importTableFile(f, undefined);
+    };
+    input.click();
+  }
+
+  /** Reads a CSV / TSV / Markdown file into a new table. */
+  async importTableFile(file: File, at?: Point): Promise<boolean> {
+    const text = await file.text();
+    const parsed = tableFromFile(file.name, text);
+    if (!parsed || !parsed.cells.length) {
+      this.toast(`No table found in ${file.name}`);
+      return false;
+    }
+    this.insertTableFromCells(parsed, at);
+    return true;
+  }
+
   /** Last cell the user clicked / edited: row & column commands act on it. */
   private tableCursor: { id: string; row: number; col: number } | null = null;
 
@@ -2013,6 +2135,18 @@ export class Editor implements ToolContext {
       }
     }
     if (!text.trim() && this.clipboard.length) return this.pasteElements(this.clipboard);
+    // a table (from a spreadsheet, a document, a web page or Markdown): into the selected table
+    // at its current cell, otherwise as a new table
+    const table = tableFromClipboard(text, data.getData('text/html'));
+    if (table && table.cells.length * (table.cells[0]?.length ?? 0) > 1) {
+      const target = this.selectedTable();
+      if (target && !target.locked) {
+        const cur = this.getTableCursor(target.id) ?? { row: 0, col: 0 };
+        // a Markdown header row lands as the first row (like any other row)
+        return this.pasteIntoTable(target.id, cur.row, cur.col, table.cells);
+      }
+      return this.insertTableFromCells(table);
+    }
     // LaTeX ("$$ … $$", "\[ … \]", \frac{…} …): a rendered formula
     if (looksLikeLatex(text)) {
       await loadMath();
