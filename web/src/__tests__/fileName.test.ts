@@ -9,11 +9,12 @@ describe('file names from the document title', () => {
     expect(fileNameFromTitle('Café réunion')).toBe('Café-réunion');
   });
 
-  it('falls back to "drawing" with no usable title or on an infinite canvas', () => {
+  it('uses the title on any canvas, and falls back to "drawing" without a usable one', () => {
     expect(fileNameFromTitle(undefined)).toBe('drawing');
     expect(fileNameFromTitle('   ')).toBe('drawing');
     expect(fileNameFromTitle('|||')).toBe('drawing');
-    expect(fileNameFor({ size: 'infinite', orientation: 'portrait', marginMm: 10, title: 'Ignored' })).toBe('drawing');
+    expect(fileNameFor({ size: 'infinite', orientation: 'portrait', marginMm: 10, title: 'Whiteboard notes' })).toBe('Whiteboard-notes');
+    expect(fileNameFor({ size: 'infinite', orientation: 'portrait', marginMm: 10 })).toBe('drawing');
     expect(fileNameFor({ size: 'A4', orientation: 'portrait', marginMm: 10, title: 'Team handbook' })).toBe('Team-handbook');
     expect(fileNameFor({ size: 'A4', orientation: 'portrait', marginMm: 10 })).toBe('drawing');
   });

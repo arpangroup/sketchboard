@@ -35,9 +35,8 @@ export function fileNameFromTitle(title: string | undefined): string {
   return name || DEFAULT_FILE_NAME;
 }
 
-/** Name for saved files: the document title when pages are used, otherwise "drawing". */
-export const fileNameFor = (setup: PageSetup): string =>
-  setup.size === 'infinite' ? DEFAULT_FILE_NAME : fileNameFromTitle(setup.title);
+/** Name for saved files: the drawing's title (shown top left), or "drawing" when it has none. */
+export const fileNameFor = (setup: PageSetup): string => fileNameFromTitle(setup.title);
 
 export function saveSceneToFile(data: SceneData, name = 'drawing'): void {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: MIME_TYPE });

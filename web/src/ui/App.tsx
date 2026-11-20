@@ -18,6 +18,7 @@ import { CellEditorOverlay } from './components/CellEditorOverlay';
 import { CodeEditorOverlay } from './components/CodeEditorOverlay';
 import { MathEditorPanel } from './components/MathEditorPanel';
 import { MathGuidePanel } from './components/MathGuidePanel';
+import { DocTitle } from './components/DocTitle';
 import { isTableFileName } from '../elements/table/tableIO';
 import { Toolbar } from './components/Toolbar';
 import { EditorContext, type EditorServices, useAppState, useEditor } from './EditorContext';
@@ -276,7 +277,10 @@ function Shell() {
           <>
             <WelcomeHint />
             <div className="sb-top">
-              <MainMenu />
+              <div className="sb-top-left">
+                <MainMenu />
+                <DocTitle />
+              </div>
               <Toolbar />
               <TopRightActions />
             </div>
