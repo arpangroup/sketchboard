@@ -8,7 +8,7 @@ import { Canvas } from './components/Canvas';
 import { PageBadge, Toast, TopRightActions, WelcomeHint, ZoomControls } from './components/Chrome';
 import { ClearCanvasDialog, CollabDialog, HelpDialog, HyperlinkDialog, PageSetupDialog } from './components/dialogs/OtherDialogs';
 import { canHoldLabel } from '../elements/boundText';
-import { ExportDialog } from './components/dialogs/ExportDialog';
+import { OpenDialog, SaveDialog } from './components/dialogs/FileDialogs';
 import { PrintDialog } from './components/dialogs/PrintDialog';
 import { MainMenu } from './components/MainMenu';
 import { PropertiesPanel } from './components/PropertiesPanel';
@@ -19,15 +19,14 @@ import { CodeEditorOverlay } from './components/CodeEditorOverlay';
 import { MathEditorPanel } from './components/MathEditorPanel';
 import { MathGuidePanel } from './components/MathGuidePanel';
 import { DocTitle } from './components/DocTitle';
-import { isTableFileName } from '../elements/table/tableIO';
 import { Toolbar } from './components/Toolbar';
 import { EditorContext, type EditorServices, useAppState, useEditor } from './EditorContext';
 import { InstallDialog, PwaBanners } from './components/Pwa';
 import { onLaunchFiles } from '../pwa/pwa';
-import { describeImport, isSceneFile, parseAnyScene } from '../persistence/importScene';
+import { importFiles } from './importFiles';
+import { describeImport, parseAnyScene } from '../persistence/importScene';
 import { WorkspaceService } from '../cloud/WorkspaceService';
 import { LibraryStore } from '../library/LibraryStore';
-import { isLibraryFileName } from '../library/libraryFormat';
 import { libraryActions, workspaceActions } from '../actions/serviceActions';
 import { WorkspaceDialog } from './components/dialogs/WorkspaceDialog';
 import { LinkDialog } from './components/dialogs/LinkDialog';
@@ -177,38 +176,7 @@ function Shell() {
       }
       return;
     }
-    const libFile = files.find((f) => isLibraryFileName(f.name));
-    if (libFile) {
-      libFile
-        .text()
-        .then((t) => {
-          const n = library.importLibrary(t);
-          editor.toast(n ? `Added ${n} item${n === 1 ? '' : 's'} from ${libFile.name} to your library` : 'Those items are already in your library');
-          editor.setState((s) => ({ sidebar: { ...s.sidebar, open: true, tab: 'library' } }));
-        })
-        .catch((err) => editor.toast(`Could not import ${libFile.name}: ${(err as Error).message}`));
-      return;
-    }
-    // a table file (CSV / TSV / Markdown): a table where it was dropped
-    const tableFile = files.find((f) => isTableFileName(f.name));
-    if (tableFile) {
-      void editor.importTableFile(tableFile, at);
-      return;
-    }
-    const scene = files.find(isSceneFile);
-    if (scene) {
-      scene
-        .text()
-        .then((t) => {
-          const opened = parseAnyScene(t);
-          editor.loadScene(opened.scene);
-          editor.zoomToFit();
-          editor.toast(describeImport(scene.name, opened));
-        })
-        .catch((err) => editor.toast(`Could not open ${scene.name}: ${(err as Error).message}`));
-      return;
-    }
-    void editor.insertImages(files, at);
+    void importFiles(editor, library, files, at);
   };
 
   // Leaving browser fullscreen (Esc / F11) also ends presentation mode.
@@ -229,7 +197,10 @@ function Shell() {
 
   const close = () => editor.setState({ openDialog: null });
   const dialogs: Record<DialogId, ReactElement> = {
-    export: <ExportDialog onClose={close} />,
+    save: <SaveDialog onClose={close} />,
+    open: <OpenDialog onClose={close} />,
+    // "Export image" (Ctrl+Shift+E) opens Save & export on its Image page
+    export: <SaveDialog onClose={close} initial="image" />,
     print: <PrintDialog onClose={close} />,
     page: <PageSetupDialog onClose={close} />,
     collab: <CollabDialog onClose={close} />,

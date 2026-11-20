@@ -11,32 +11,31 @@ interface Item {
   danger?: boolean;
 }
 
+/**
+ * The main menu, kept short: files go through two task dialogs (Open & import, Save & export) that
+ * hold every format; the rest is sharing, the page, help and view settings.
+ */
 const ITEMS: Array<Item | 'sep'> = [
-  { action: 'openFile', icon: 'folder', label: 'Open… (.sketchboard, .excalidraw)' },
-  { action: 'saveFile', icon: 'download', label: 'Save to file…' },
-  { action: 'saveExcalidraw', icon: 'download', label: 'Save as Excalidraw…' },
-  { action: 'importTable', icon: 'table', label: 'Import table (CSV, TSV, Markdown)…' },
+  { action: 'dialog:open', icon: 'folder', label: 'Open & import…' },
+  { action: 'dialog:save', icon: 'download', label: 'Save & export…' },
   'sep',
-  { action: 'dialog:workspace', icon: 'cloud', label: 'Workspace (saved drawings)…' },
-  { action: 'saveToWorkspace', icon: 'cloud', label: 'Save to workspace' },
-  { action: 'dialog:link', icon: 'link', label: 'Export to link…' },
+  { action: 'dialog:workspace', icon: 'cloud', label: 'Workspace…' },
+  { action: 'dialog:collab', icon: 'share', label: 'Live collaboration…' },
   'sep',
-  { action: 'dialog:export', icon: 'image', label: 'Export image…' },
   { action: 'dialog:print', icon: 'print', label: 'Print…' },
   { action: 'dialog:page', icon: 'page', label: 'Page setup…' },
-  'sep',
-  { action: 'dialog:collab', icon: 'share', label: 'Live collaboration…' },
-  { action: 'toggleGrid', icon: 'grid', label: 'Toggle grid' },
   { action: 'dialog:help', icon: 'keyboard', label: 'Keyboard shortcuts' },
-  'sep',
-  { action: 'clearCanvas', icon: 'trash', label: 'Clear canvas', danger: true },
 ];
+
+/** Keys shown beside the file dialogs: the quick action that skips them. */
+const QUICK_KEYS: Record<string, string> = { 'dialog:open': 'Ctrl+O', 'dialog:save': 'Ctrl+S' };
 
 export function MainMenu() {
   const { editor, actions } = useEditor();
   const [open, setOpen] = useState(false);
   const theme = useAppState((s) => s.theme);
   const viewMode = useAppState((s) => s.viewColorMode);
+  const grid = useAppState((s) => s.gridEnabled);
   const ref = useRef<HTMLDivElement>(null);
   const pwaState = usePwa();
   const showInstall = !pwaState.installed && (pwaState.canInstall || pwaState.needsIosInstructions);
@@ -71,7 +70,7 @@ export function MainMenu() {
               >
                 <Icon />
                 <span>{it.label ?? action?.label}</span>
-                {action?.shortcut && <kbd>{action.shortcut}</kbd>}
+                {(QUICK_KEYS[it.action] ?? action?.shortcut) && <kbd>{QUICK_KEYS[it.action] ?? action?.shortcut}</kbd>}
               </button>
             );
           })}
@@ -102,6 +101,13 @@ export function MainMenu() {
             </button>
           </div>
           <div className="sb-dropdown__row">
+            <span>Grid</span>
+            <button className={`sb-chip ${grid ? 'is-active' : ''}`} onClick={() => editor.setState((s) => ({ gridEnabled: !s.gridEnabled }))} aria-pressed={grid}>
+              <Icons.grid />
+              {grid ? 'On' : 'Off'}
+            </button>
+          </div>
+          <div className="sb-dropdown__row">
             <span>Preview</span>
             <div className="sb-segmented">
               {COLOR_MODE_OPTIONS.map((m) => (
@@ -116,6 +122,18 @@ export function MainMenu() {
               ))}
             </div>
           </div>
+          <hr />
+          <button
+            role="menuitem"
+            className="sb-dropdown__item is-danger"
+            onClick={() => {
+              setOpen(false);
+              actions.execute('clearCanvas');
+            }}
+          >
+            <Icons.trash />
+            <span>Clear canvas</span>
+          </button>
         </div>
       )}
     </div>

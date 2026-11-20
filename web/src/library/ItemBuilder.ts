@@ -1,5 +1,6 @@
 import { DEFAULT_STYLE, LINE_HEIGHT } from '../core/constants';
-import type { CurrentStyle, FigureElement, LinearElement, Point, ShapeElement, SketchElement, TableElement, TextElement } from '../core/types';
+import type { CurrentStyle, FigureElement, LinearElement, Point, ShapeElement, SketchElement, TableElement, TextElement, TextRun } from '../core/types';
+import { LABEL_PADDING, layoutLabel } from '../elements/boundText';
 import { createFigure, createLinear, createShape, createTable, createText } from '../elements/factory';
 import { pointsToElementGeometry } from '../elements/handlers/pointShapes';
 import { relayout } from '../elements/table/tableLayout';
@@ -120,6 +121,30 @@ export class ItemBuilder {
     const { size, bold, italic, color, family, ...shape } = o;
     this.shape(type, x, y, w, h, shape);
     if (text) this.label(text, x + w / 2, y + h / 2, { size, bold, italic, color, family });
+    return this;
+  }
+
+  /**
+   * A shape with real label text inside it (edited with a double-click, wraps to the shape's width,
+   * keeps any bold / coloured words in `runs`). The shape grows to fit the text (at least minHeight).
+   */
+  labelled(
+    x: number,
+    y: number,
+    w: number,
+    text: string,
+    o: TextOpts & { runs?: TextRun[]; align?: TextElement['textAlign']; minHeight?: number; shape?: Partial<ShapeElement> } = {},
+  ): this {
+    const shape: ShapeElement = { ...createShape('rectangle', this.style, { x, y }, 0), width: w, height: o.minHeight ?? 60, ...o.shape };
+    const t: TextElement = {
+      ...this.makeText(text, 0, 0, o.align ?? 'left', o),
+      containerId: shape.id,
+      ...(o.runs ? { runs: o.runs } : {}),
+    };
+    const first = layoutLabel(t, shape);
+    const sized: ShapeElement = { ...shape, height: Math.max(o.minHeight ?? 0, Math.ceil(first.height + LABEL_PADDING * 2 + 12)) };
+    this.push(sized);
+    this.push({ ...t, ...layoutLabel(t, sized) });
     return this;
   }
 

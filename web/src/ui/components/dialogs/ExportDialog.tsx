@@ -8,17 +8,18 @@ import { COLOR_MODE_OPTIONS } from '../../../renderer/colorModes';
 import { useAppState, useEditor } from '../../EditorContext';
 import { Field, Modal, Segmented } from './Modal';
 
-type Format = 'png' | 'svg' | 'json' | 'excalidraw';
+export type Format = 'png' | 'svg' | 'json' | 'excalidraw';
 
 const EXTENSION: Record<Format, string> = { png: 'png', svg: 'svg', json: 'sketchboard', excalidraw: 'excalidraw' };
 
-export function ExportDialog({ onClose }: { onClose: () => void }) {
+/** The image / file export form (preview + options); used on its own page of the Save & export dialog. */
+export function ImageExportPanel({ onClose, formats = ['png', 'svg', 'json', 'excalidraw'] }: { onClose: () => void; formats?: Format[] }) {
   const { editor } = useEditor();
   const pageSetup = useAppState((s) => s.pageSetup);
   const selectedIds = useAppState((s) => s.selectedIds);
   const hasSelection = Object.keys(selectedIds).length > 0;
 
-  const [format, setFormat] = useState<Format>('png');
+  const [format, setFormat] = useState<Format>(formats[0]);
   const [scope, setScope] = useState<ExportScope>(hasSelection ? 'selection' : pageSetup.size === 'infinite' ? 'content' : 'page');
   const [colorMode, setColorMode] = useState<ColorMode>('color');
   const [background, setBackground] = useState(true);
@@ -70,7 +71,6 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal title="Export" onClose={onClose} wide>
       <div className="sb-export">
         <div className="sb-preview sb-preview--checker" dangerouslySetInnerHTML={{ __html: preview }} />
         <div className="sb-export__form">
@@ -78,12 +78,14 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
             <Segmented
               value={format}
               onChange={setFormat}
-              options={[
-                { value: 'png', label: 'PNG' },
-                { value: 'svg', label: 'SVG' },
-                { value: 'json', label: 'SketchBoard' },
-                { value: 'excalidraw', label: 'Excalidraw' },
-              ]}
+              options={(
+                [
+                  { value: 'png', label: 'PNG' },
+                  { value: 'svg', label: 'SVG' },
+                  { value: 'json', label: 'SketchBoard' },
+                  { value: 'excalidraw', label: 'Excalidraw' },
+                ] as Array<{ value: Format; label: string }>
+              ).filter((f) => formats.includes(f.value))}
             />
           </Field>
           {format === 'excalidraw' && (
@@ -140,6 +142,14 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
           </div>
         </div>
       </div>
+  );
+}
+
+/** Export on its own (kept for code that opens it directly); the menu uses Save & export. */
+export function ExportDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal title="Export" onClose={onClose} wide>
+      <ImageExportPanel onClose={onClose} />
     </Modal>
   );
 }

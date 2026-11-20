@@ -62,9 +62,20 @@ describe('library items', () => {
     expect(all.every((i) => i.elements.length > 0 && i.category)).toBe(true);
     const names = getBuiltinSections().map((s) => s.name);
     expect(names).toEqual([
-      'Database', 'UML & class diagrams', 'Callouts', 'Flowchart', 'Forms & UI', 'Architecture',
+      'Database', 'UML & class diagrams', 'Callouts', 'Alerts & notes', 'Flowchart', 'Forms & UI', 'Architecture',
       'Sales & CRM', 'Sales dashboards & charts', 'Products, inventory & CPQ',
+      'AWS services', 'AWS groups', 'AWS architectures',
     ]);
+    // alert boxes carry real labels (bound to their box), with bold lead words
+    const alerts = all.filter((i) => i.category === 'Alerts & notes');
+    expect(alerts.length).toBeGreaterThan(10);
+    const success = alerts.find((i) => i.name === 'Success / solution (green)')!;
+    const label = success.elements.find((e) => e.type === 'text');
+    expect(label?.type === 'text' && label.containerId === success.elements[0].id && label.runs?.some((r) => r.b)).toBe(true);
+    const aws = all.filter((i) => (i.category ?? '').startsWith('AWS')).map((i) => i.name);
+    for (const n of ['Amazon EC2 (Virtual servers)', 'AWS Lambda (Serverless functions)', 'Amazon S3 (Object storage)', 'VPC (group)', 'Three-tier web app (multi-AZ)', 'Serverless API']) {
+      expect(aws.includes(n)).toBe(true);
+    }
     const sales = all.filter((i) => (i.category ?? '').startsWith('Sales') || (i.category ?? '').startsWith('Products')).map((i) => i.name);
     for (const n of ['Sales Cloud (CRM)', 'Campaign', 'Lead', 'Lead status badges', 'Account', 'Contact', 'Opportunity / deal', 'Sales dashboard', 'Product card', 'CPQ flow']) {
       expect(sales.includes(n)).toBe(true);

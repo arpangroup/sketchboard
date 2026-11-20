@@ -1,5 +1,7 @@
 import type { LibraryItem } from '../core/types';
 import { ItemBuilder } from './ItemBuilder';
+import { ALERT_SECTIONS } from './builtinAlerts';
+import { AWS_SECTIONS } from './builtinAws';
 import { SALES_SECTIONS } from './builtinSales';
 import { normalizeItemElements } from './libraryFormat';
 
@@ -396,6 +398,10 @@ section('Architecture', [
 
 // Sales: CRM, dashboards & charts, products / inventory / CPQ (in their own file)
 for (const s of SALES_SECTIONS) section(s.name, s.items);
+// AWS: service tiles, grouping boxes and reference architectures
+for (const s of AWS_SECTIONS) section(s.name, s.items);
+// Alerts & notes go right after Callouts
+BUILTIN_SECTIONS.splice(BUILTIN_SECTIONS.findIndex((s) => s.name === 'Callouts') + 1, 0, ...ALERT_SECTIONS);
 
 let cache: LibraryItem[] | null = null;
 
