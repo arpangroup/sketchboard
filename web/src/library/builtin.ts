@@ -1,5 +1,6 @@
 import type { LibraryItem } from '../core/types';
 import { ItemBuilder } from './ItemBuilder';
+import { SALES_SECTIONS } from './builtinSales';
 import { normalizeItemElements } from './libraryFormat';
 
 /**
@@ -14,6 +15,7 @@ interface Def {
   name: string;
   build: (b: ItemBuilder) => ItemBuilder;
 }
+export type BuiltinDef = Def;
 
 export const BUILTIN_SECTIONS: Array<{ name: string; items: Def[] }> = [];
 const section = (name: string, items: Def[]) => BUILTIN_SECTIONS.push({ name, items });
@@ -391,6 +393,9 @@ section('Architecture', [
     build: (b) => b.box('rectangle', 0, 0, 70, 180, 'API\nGateway', { rounded: true, backgroundColor: '#c3fae8', size: 15 }),
   },
 ]);
+
+// Sales: CRM, dashboards & charts, products / inventory / CPQ (in their own file)
+for (const s of SALES_SECTIONS) section(s.name, s.items);
 
 let cache: LibraryItem[] | null = null;
 

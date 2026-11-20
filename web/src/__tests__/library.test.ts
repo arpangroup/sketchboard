@@ -61,7 +61,14 @@ describe('library items', () => {
     expect(new Set(all.map((i) => i.id)).size).toBe(all.length);
     expect(all.every((i) => i.elements.length > 0 && i.category)).toBe(true);
     const names = getBuiltinSections().map((s) => s.name);
-    expect(names).toEqual(['Database', 'UML & class diagrams', 'Callouts', 'Flowchart', 'Forms & UI', 'Architecture']);
+    expect(names).toEqual([
+      'Database', 'UML & class diagrams', 'Callouts', 'Flowchart', 'Forms & UI', 'Architecture',
+      'Sales & CRM', 'Sales dashboards & charts', 'Products, inventory & CPQ',
+    ]);
+    const sales = all.filter((i) => (i.category ?? '').startsWith('Sales') || (i.category ?? '').startsWith('Products')).map((i) => i.name);
+    for (const n of ['Sales Cloud (CRM)', 'Campaign', 'Lead', 'Lead status badges', 'Account', 'Contact', 'Opportunity / deal', 'Sales dashboard', 'Product card', 'CPQ flow']) {
+      expect(sales.includes(n)).toBe(true);
+    }
     expect(all.filter((i) => i.category === 'Callouts').every((i) => i.elements.some((e) => e.type === 'figure'))).toBe(true);
     const forms = all.filter((i) => i.category === 'Forms & UI').map((i) => i.name);
     for (const n of ['Text input', 'Password input', 'Checkbox', 'Radio group', 'List']) expect(forms.includes(n)).toBe(true);
